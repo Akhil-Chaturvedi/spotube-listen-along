@@ -1,16 +1,7 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/metadata_plugin/core/auth.dart';
 import 'package:spotube/provider/metadata_plugin/utils/paginated.dart';
-
-/// How often the Browse sections are re-fetched while the app is open.
-///
-/// Sections are otherwise fetched exactly once per session, which means
-/// dynamic sections (e.g. a plugin's "Friend Activity") never update. A modest
-/// interval keeps them fresh without hammering the metadata provider.
-const _browseSectionsRefreshInterval = Duration(seconds: 30);
 
 class MetadataPluginBrowseSectionsNotifier
     extends PaginatedAsyncNotifier<SpotubeBrowseSectionObject<Object>> {
@@ -34,15 +25,7 @@ class MetadataPluginBrowseSectionsNotifier
     final isAuthenticated =
         await ref.watch(metadataPluginAuthenticatedProvider.future);
 
-    // Only poll while authenticated; before login the plugin has no token and
-    // every request would 401. The notifier rebuilds when auth state changes,
-    // which starts/stops the timer accordingly.
-    if (isAuthenticated) {
-      final timer = Timer.periodic(_browseSectionsRefreshInterval, (_) {
-        ref.invalidateSelf();
-      });
-      ref.onDispose(timer.cancel);
-    } else {
+    if (!isAuthenticated) {
       return SpotubePaginationResponseObject(
         limit: 20,
         nextOffset: null,
@@ -52,6 +35,10 @@ class MetadataPluginBrowseSectionsNotifier
       );
     }
 
+    // NOTE: no periodic timer here. A fixed-interval refresh caused constant
+    // re-fetching (and connection churn) on the home screen. Dynamic sections
+    // instead refresh on demand: a plugin calls Plugin.requestRefresh(), which
+    // invalidates this provider (see metadata_plugin_provider.dart).
     return await fetch(0, 20);
   }
 }

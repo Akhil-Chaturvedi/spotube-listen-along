@@ -13,6 +13,7 @@ import 'package:spotube/provider/audio_player/querying_track_info.dart';
 import 'package:spotube/provider/connect/connect.dart';
 import 'package:spotube/provider/history/history.dart';
 import 'package:spotube/provider/audio_player/audio_player.dart';
+import 'package:spotube/provider/listen_along/listen_along.dart';
 import 'package:spotube/provider/metadata_plugin/library/tracks.dart';
 import 'package:spotube/provider/metadata_plugin/tracks/playlist.dart';
 import 'package:spotube/provider/metadata_plugin/core/user.dart';
@@ -208,6 +209,30 @@ class PlaylistCard extends HookConsumerWidget {
       );
     }
 
+    // Friend Activity cards are synthetic playlists with id `friend-<userId>`.
+    // When the active metadata plugin supports Listen Along, surface a toggle
+    // right on the card so the user can mirror a friend from Explore.
+    final listenAlongUserId = ref.watch(listenAlongControllerProvider);
+    final isFriendCard = playlist.id.startsWith('friend-');
+    final friendUserId = isFriendCard
+        ? playlist.id.substring('friend-'.length)
+        : null;
+    final listenAlongSupported =
+        ref.watch(metadataPluginProvider).asData?.value?.listenAlong
+            .isSupported ??
+            false;
+
+    final topLeftBadge = (isFriendCard && listenAlongSupported)
+        ? _ListenAlongBadge(
+            active: listenAlongUserId == friendUserId,
+            onPressed: () {
+              ref
+                  .read(listenAlongControllerProvider.notifier)
+                  .toggle(friendUserId!);
+            },
+          )
+        : null;
+
     return PlaybuttonCard(
       title: playlist.name,
       description: playlist.description,
@@ -216,9 +241,29 @@ class PlaylistCard extends HookConsumerWidget {
       isPlaying: isPlaylistPlaying,
       isLoading: isLoading,
       isOwner: isOwner,
+      topLeftBadge: topLeftBadge,
       onTap: onTap,
       onPlaybuttonPressed: onPlaybuttonPressed,
       onAddToQueuePressed: onAddToQueuePressed,
+    );
+  }
+}
+
+class _ListenAlongBadge extends StatelessWidget {
+  final bool active;
+  final VoidCallback onPressed;
+
+  const _ListenAlongBadge({required this.active, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton.secondary(
+      icon: Icon(
+        active ? Icons.headphones : Icons.headphones_outlined,
+        size: 16,
+      ),
+      size: ButtonSize.small,
+      onPressed: onPressed,
     );
   }
 }

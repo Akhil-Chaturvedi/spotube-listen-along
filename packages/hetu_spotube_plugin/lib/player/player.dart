@@ -6,9 +6,11 @@
 /// makes it reusable for any plugin that needs to drive playback (listen-along,
 /// radio, DJ/party queues, scrobble playback, remote control, ...).
 ///
-/// All functions are supplied by the host; this class is just a typed bag of
-/// callbacks that the Hetu binding forwards to.
-class SpotubePlayer {
+/// NOTE: the class MUST be named `Player` (matching the Hetu `external class
+/// Player` and the registered external-class name). Hetu resolves external
+/// objects by their Dart runtimeType, so a differently-named Dart class would be
+/// reported as an "Undefined identifier".
+class Player {
   /// Replace the current queue with [tracks] and optionally start playing.
   final Future<void> Function(
     List<Map<String, dynamic>> tracks, {
@@ -43,7 +45,7 @@ class SpotubePlayer {
   ///    positionMs: int, isPlaying: bool }`
   final Future<Map<String, dynamic>> Function() getState;
 
-  const SpotubePlayer({
+  const Player({
     required this.loadTracks,
     required this.playTrack,
     required this.addToQueue,

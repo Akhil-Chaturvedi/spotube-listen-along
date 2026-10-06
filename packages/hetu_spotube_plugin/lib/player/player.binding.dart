@@ -2,12 +2,12 @@ import 'package:hetu_script/binding.dart';
 import 'package:hetu_script/hetu_script.dart';
 import 'package:hetu_spotube_plugin/player/player.dart';
 
-/// Hetu-side instance members for [SpotubePlayer].
+/// Hetu-side instance members for [Player].
 ///
 /// The plugin gets a single `Player` instance (see [PlayerClassBinding]) and
 /// calls these methods on it. Track arguments are plain maps in the same shape
 /// as `MetadataTrack`.
-extension SpotubePlayerBinding on SpotubePlayer {
+extension PlayerBinding on Player {
   dynamic htFetch(String id) {
     return switch (id) {
       "loadTracks" => (
@@ -101,7 +101,7 @@ extension SpotubePlayerBinding on SpotubePlayer {
 /// Exposes a `Player` class to Hetu. The host supplies a factory that returns
 /// a [SpotubePlayer] wired to the real audio player.
 class PlayerClassBinding extends HTExternalClass {
-  final SpotubePlayer Function() createPlayer;
+  final Player Function() createPlayer;
 
   PlayerClassBinding({required this.createPlayer}) : super("Player");
 
@@ -122,5 +122,5 @@ class PlayerClassBinding extends HTExternalClass {
 
   @override
   instanceMemberGet(object, String varName) =>
-      (object as SpotubePlayer).htFetch(varName);
+      (object as Player).htFetch(varName);
 }

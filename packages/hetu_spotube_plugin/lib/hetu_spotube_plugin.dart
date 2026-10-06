@@ -46,7 +46,7 @@ class HetuSpotubePluginLoader {
     )
     onShowForm,
     required YouTubeEngine Function() createYoutubeEngine,
-    SpotubePlayer Function()? createPlayer,
+    Player Function()? createPlayer,
     void Function()? onRequestRefresh,
   }) {
     final classes = [

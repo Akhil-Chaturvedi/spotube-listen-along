@@ -18,6 +18,10 @@ class PlaybuttonCard extends StatelessWidget {
   final String title;
   final bool isOwner;
 
+  /// Optional widget shown as a badge at the top-left of the artwork. Used by
+  /// plugins that expose extra per-card actions (e.g. Listen Along).
+  final Widget? topLeftBadge;
+
   const PlaybuttonCard({
     required this.isPlaying,
     required this.isLoading,
@@ -29,6 +33,7 @@ class PlaybuttonCard extends StatelessWidget {
     this.isOwner = false,
     this.imageUrl,
     this.image,
+    this.topLeftBadge,
     super.key,
   }) : assert(
           imageUrl != null || image != null,
@@ -147,6 +152,12 @@ class PlaybuttonCard extends StatelessWidget {
                   ),
                   child: Icon(SpotubeIcons.user),
                 ),
+              ),
+            if (topLeftBadge != null)
+              Positioned(
+                left: 5,
+                top: 5,
+                child: topLeftBadge!,
               ),
           ],
         ),
