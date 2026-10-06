@@ -43,7 +43,7 @@ class MetadataPluginBrowseSectionsNotifier
       });
       ref.onDispose(timer.cancel);
     } else {
-      return const SpotubePaginationResponseObject(
+      return SpotubePaginationResponseObject(
         limit: 20,
         nextOffset: null,
         total: 0,

@@ -23,7 +23,7 @@ class MetadataPluginAlbumReleasesNotifier
     final isAuthenticated =
         await ref.watch(metadataPluginAuthenticatedProvider.future);
     if (!isAuthenticated) {
-      return const SpotubePaginationResponseObject(
+      return SpotubePaginationResponseObject(
         limit: 20,
         nextOffset: null,
         total: 0,
