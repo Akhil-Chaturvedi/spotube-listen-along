@@ -16,6 +16,7 @@ import 'package:spotube/services/dio/dio.dart';
 import 'package:spotube/services/logger/logger.dart';
 import 'package:spotube/services/metadata/errors/exceptions.dart';
 import 'package:spotube/services/metadata/metadata.dart';
+import 'package:spotube/services/metadata/player_bridge.dart';
 import 'package:spotube/utils/service_utils.dart';
 import 'package:archive/archive.dart';
 import 'package:pub_semver/pub_semver.dart';
@@ -606,6 +607,7 @@ final metadataPluginProvider = FutureProvider<MetadataPlugin?>(
       youtubeEngine,
       defaultPlugin,
       pluginByteCode,
+      createPlayer: () => createSpotubePlayer(ref),
     );
   },
 );
@@ -630,6 +632,7 @@ final audioSourcePluginProvider = FutureProvider<MetadataPlugin?>(
       youtubeEngine,
       defaultPlugin,
       pluginByteCode,
+      createPlayer: () => createSpotubePlayer(ref),
     );
   },
 );

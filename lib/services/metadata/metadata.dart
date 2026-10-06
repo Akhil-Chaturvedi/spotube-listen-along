@@ -35,8 +35,9 @@ class MetadataPlugin {
   static Future<MetadataPlugin> create(
     YouTubeEngine youtubeEngine,
     PluginConfiguration config,
-    Uint8List byteCode,
-  ) async {
+    Uint8List byteCode, {
+    spotube_plugin.SpotubePlayer Function()? createPlayer,
+  }) async {
     final sharedPreferences = await SharedPreferences.getInstance();
     BuildContext? pageContext;
 
@@ -141,6 +142,7 @@ class MetadataPlugin {
           },
         );
       },
+      createPlayer: createPlayer,
     );
 
     await HetuStdLoader.loadBytecodeFlutter(hetu);

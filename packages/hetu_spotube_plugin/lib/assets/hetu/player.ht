@@ -1,0 +1,24 @@
+external class Player {
+  construct ()
+
+  /// Replace the queue with [tracks] (list of MetadataTrack maps) and optionally
+  /// start playing from [initialIndex].
+  fun loadTracks(tracks: List, {autoPlay: bool, initialIndex: int}) -> Future
+
+  /// Play a single track immediately (replaces the queue).
+  fun playTrack(track: Map) -> Future
+
+  /// Append a track to the end of the current queue.
+  fun addToQueue(track: Map) -> Future
+
+  fun play() -> Future
+  fun pause() -> Future
+  fun next() -> Future
+  fun previous() -> Future
+  fun seek(positionMs: int) -> Future
+
+  /// { activeTrack: Map|null, queue: List, currentIndex: int, positionMs: int, isPlaying: bool }
+  fun getState() -> Future<Map>
+}
+
+export { Player }
