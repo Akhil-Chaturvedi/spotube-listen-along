@@ -58,8 +58,15 @@ final localTracksProvider =
     final downloadDir = Directory(downloadLocation);
     final cacheDir =
         Directory(await UserPreferencesNotifier.getMusicCacheDir());
-    if (!await downloadDir.exists()) {
-      await downloadDir.create(recursive: true);
+    // The download directory may be inaccessible on Android scoped storage
+    // (Permission denied). Treat it as best-effort so the rest of the local
+    // library (cache dir + user-added locations) still loads.
+    try {
+      if (!await downloadDir.exists()) {
+        await downloadDir.create(recursive: true);
+      }
+    } catch (e, stack) {
+      AppLogger.reportError(e, stack);
     }
     if (!await cacheDir.exists()) {
       await cacheDir.create(recursive: true);
@@ -75,8 +82,10 @@ final localTracksProvider =
     ]) {
       if (location.isEmpty) continue;
       final entities = <File>[];
-      if (await Directory(location).exists()) {
-        try {
+      // `exists()` itself can throw a PathAccessException when the directory
+      // is not readable (e.g. scoped storage), so keep it inside the try.
+      try {
+        if (await Directory(location).exists()) {
           final dirEntities =
               await Directory(location).list(recursive: true).toList();
 
@@ -90,9 +99,9 @@ final localTracksProvider =
               },
             ).cast<File>(),
           );
-        } catch (e, stack) {
-          AppLogger.reportError(e, stack);
         }
+      } catch (e, stack) {
+        AppLogger.reportError(e, stack);
       }
 
       final List<MetadataFile> filesWithMetadata = await Future.wait(

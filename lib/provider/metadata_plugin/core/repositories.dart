@@ -1,7 +1,9 @@
+import 'package:dio/dio.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/metadata_plugin/utils/paginated.dart';
 import 'package:spotube/services/dio/dio.dart';
+import 'package:spotube/services/logger/logger.dart';
 
 class MetadataPluginRepositoriesNotifier
     extends PaginatedAsyncNotifier<MetadataPluginRepository> {
@@ -34,10 +36,22 @@ class MetadataPluginRepositoriesNotifier
       },
     );
 
-    final responses = await Future.wait([
-      if (_hasMore["github.com"] ?? true) gitubSearch,
-      if (_hasMore["codeberg.org"] ?? true) codebergSearch,
-    ]);
+    // Fetch each store independently so that one unreachable/offline store
+    // (e.g. a DNS failure for codeberg.org) does not fail the whole search.
+    final responses = (await Future.wait([
+      if (_hasMore["github.com"] ?? true)
+        gitubSearch.then<Response?>((r) => r).catchError((e, stack) {
+          AppLogger.reportError(e, stack);
+          return null;
+        }),
+      if (_hasMore["codeberg.org"] ?? true)
+        codebergSearch.then<Response?>((r) => r).catchError((e, stack) {
+          AppLogger.reportError(e, stack);
+          return null;
+        }),
+    ]))
+        .nonNulls
+        .toList();
 
     final repos = responses
         .expand(
