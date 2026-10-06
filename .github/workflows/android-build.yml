@@ -98,10 +98,11 @@ jobs:
       - name: Publish APK to a Release (direct .apk download)
         uses: softprops/action-gh-release@v2
         with:
-          tag: listen-along-latest
+          tag_name: listen-along-latest
           name: "Spotube Listen Along (latest)"
           body: |
             Direct APK for the Listen Along fork (armeabi-v7a / 32-bit ARM).
             Built from commit ${{ github.sha }}.
           files: build/Spotube-android-armv7a.apk
           make_latest: true
+          overwrite_files: true
