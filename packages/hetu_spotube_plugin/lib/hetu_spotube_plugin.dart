@@ -8,6 +8,7 @@ import 'package:hetu_spotube_plugin/localstorage/localstorage.binding.dart';
 import 'package:hetu_spotube_plugin/localstorage/localstorage.dart';
 import 'package:hetu_spotube_plugin/player/player.binding.dart';
 import 'package:hetu_spotube_plugin/player/player.dart';
+import 'package:hetu_spotube_plugin/plugin/plugin.binding.dart';
 import 'package:hetu_spotube_plugin/timezone/timezone.binding.dart';
 import 'package:hetu_spotube_plugin/webview/webview.binding.dart';
 import 'package:hetu_spotube_plugin/youtube_engine/youtube_engine.binding.dart';
@@ -46,6 +47,7 @@ class HetuSpotubePluginLoader {
     onShowForm,
     required YouTubeEngine Function() createYoutubeEngine,
     SpotubePlayer Function()? createPlayer,
+    void Function()? onRequestRefresh,
   }) {
     final classes = [
       CookieClassBinding(),
@@ -61,6 +63,9 @@ class HetuSpotubePluginLoader {
       // omit createPlayer and the `Player` class stays unavailable to plugins.
       if (createPlayer != null)
         PlayerClassBinding(createPlayer: createPlayer),
+      // Plugin-requestable Browse refresh is optional too.
+      if (onRequestRefresh != null)
+        PluginClassBinding(onRequestRefresh: onRequestRefresh),
     ];
 
     for (final classBinding in classes) {

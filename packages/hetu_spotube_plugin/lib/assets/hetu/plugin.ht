@@ -1,0 +1,10 @@
+external class Plugin {
+  /// Ask the host to re-fetch the current metadata provider's Browse sections.
+  ///
+  /// Useful for plugins whose Browse sections change over time (e.g. a live
+  /// "Friend Activity" list): instead of the host polling on a fixed schedule,
+  /// the plugin calls this when it actually has new data.
+  static fun requestRefresh() -> Future
+}
+
+export { Plugin }

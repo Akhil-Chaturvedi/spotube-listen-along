@@ -37,6 +37,7 @@ class MetadataPlugin {
     PluginConfiguration config,
     Uint8List byteCode, {
     spotube_plugin.SpotubePlayer Function()? createPlayer,
+    void Function()? onRequestRefresh,
   }) async {
     final sharedPreferences = await SharedPreferences.getInstance();
     BuildContext? pageContext;
@@ -143,6 +144,7 @@ class MetadataPlugin {
         );
       },
       createPlayer: createPlayer,
+      onRequestRefresh: onRequestRefresh,
     );
 
     await HetuStdLoader.loadBytecodeFlutter(hetu);

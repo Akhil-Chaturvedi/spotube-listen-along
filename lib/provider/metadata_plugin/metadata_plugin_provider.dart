@@ -14,6 +14,7 @@ import 'package:spotube/provider/database/database.dart';
 import 'package:spotube/provider/youtube_engine/youtube_engine.dart';
 import 'package:spotube/services/dio/dio.dart';
 import 'package:spotube/services/logger/logger.dart';
+import 'package:spotube/provider/metadata_plugin/browse/sections.dart';
 import 'package:spotube/services/metadata/errors/exceptions.dart';
 import 'package:spotube/services/metadata/metadata.dart';
 import 'package:spotube/services/metadata/player_bridge.dart';
@@ -608,6 +609,10 @@ final metadataPluginProvider = FutureProvider<MetadataPlugin?>(
       defaultPlugin,
       pluginByteCode,
       createPlayer: () => createSpotubePlayer(ref),
+      // Let the plugin ask us to re-fetch Browse sections when it has new data
+      // (e.g. a live "Friend Activity" list) instead of us polling blindly.
+      onRequestRefresh: () =>
+          ref.invalidate(metadataPluginBrowseSectionsProvider),
     );
   },
 );
