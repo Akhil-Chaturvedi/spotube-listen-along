@@ -24,6 +24,7 @@ import 'package:spotube/services/metadata/endpoints/playlist.dart';
 import 'package:spotube/services/metadata/endpoints/search.dart';
 import 'package:spotube/services/metadata/endpoints/track.dart';
 import 'package:spotube/services/metadata/endpoints/core.dart';
+import 'package:spotube/services/metadata/endpoints/listen_along.dart';
 import 'package:spotube/services/metadata/endpoints/user.dart';
 import 'package:spotube/services/youtube_engine/youtube_engine.dart';
 
@@ -176,6 +177,7 @@ class MetadataPlugin {
   late final MetadataPluginTrackEndpoint track;
   late final MetadataPluginUserEndpoint user;
   late final MetadataPluginCore core;
+  late final MetadataPluginListenAlongEndpoint listenAlong;
 
   MetadataPlugin._(this.hetu) {
     auth = MetadataAuthEndpoint(hetu);
@@ -189,5 +191,6 @@ class MetadataPlugin {
     track = MetadataPluginTrackEndpoint(hetu);
     user = MetadataPluginUserEndpoint(hetu);
     core = MetadataPluginCore(hetu);
+    listenAlong = MetadataPluginListenAlongEndpoint(hetu);
   }
 }
