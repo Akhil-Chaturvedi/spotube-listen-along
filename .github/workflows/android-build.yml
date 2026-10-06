@@ -1,0 +1,93 @@
+name: Build Spotube (Listen Along fork) Android APK
+
+# Cloud build so no local Flutter SDK / disk space is required.
+# Produces a universal release APK as a downloadable artifact.
+#
+# Usage:
+#   1. Push this fork to a GitHub repo.
+#   2. Actions -> "Build Spotube (Listen Along fork) Android APK" -> Run workflow.
+#   3. Download the `spotube-android-apk` artifact when it finishes.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+env:
+  FLUTTER_VERSION: 3.35.2
+  FLUTTER_CHANNEL: master
+  CHANNEL: stable
+  # Minimal .env content. The build CLI writes this to .env and appends
+  # RELEASE_CHANNEL. Update check is disabled to avoid extra network calls.
+  DOTENV: |
+    ENABLE_UPDATE_CHECK=0
+    LASTFM_API_KEY=
+    LASTFM_API_SECRET=
+    HIDE_DONATIONS=0
+
+permissions:
+  contents: read
+
+jobs:
+  build_android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
+          sudo apt-get clean
+          df -h
+
+      - uses: subosito/flutter-action@v2.18.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+          git-source: https://github.com/flutter/flutter.git
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+          cache: "gradle"
+          check-latest: true
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Android dependencies
+        run: |
+          flutter pub get
+          dart cli/cli.dart install-dependencies --platform=android --arch=all
+
+      - name: Generate a debug keystore for signing
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/app/upload-keystore.jks \
+            -storepass spotube123 -keypass spotube123 \
+            -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Spotube Listen Along, OU=Dev, O=Dev, L=Dev, S=Dev, C=IN"
+          cat > android/key.properties <<'EOF'
+          storePassword=spotube123
+          keyPassword=spotube123
+          keyAlias=upload
+          storeFile=upload-keystore.jks
+          EOF
+
+      - name: Build Android APK
+        run: dart cli/cli.dart build --arch=all android
+
+      - name: Show output
+        run: ls -la build/Spotube-android-all-arch.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spotube-android-apk
+          path: build/Spotube-android-all-arch.apk
+          if-no-files-found: error
