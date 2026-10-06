@@ -4,19 +4,19 @@ import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/audio_player/audio_player.dart';
 import 'package:spotube/services/audio_player/audio_player.dart';
 
-/// Builds a [SpotubePlayer] that lets a plugin drive Spotube's real player.
+/// Builds a [Player] that lets a plugin drive Spotube's real player.
 ///
 /// This is the generic "plugin can control playback" primitive. It contains no
 /// metadata-provider specifics: a plugin hands us plain track maps and we play
 /// them through the normal pipeline. Any plugin (listen-along, radio, DJ queues,
 /// remote control, ...) can use it.
-SpotubePlayer createSpotubePlayer(Ref ref) {
+Player createSpotubePlayer(Ref ref) {
   final notifier = ref.read(audioPlayerProvider.notifier);
 
   SpotubeFullTrackObject parseTrack(Map<String, dynamic> json) =>
       SpotubeFullTrackObject.fromJson(json);
 
-  return SpotubePlayer(
+  return Player(
     loadTracks: (tracks, {autoPlay = false, initialIndex = 0}) async {
       final parsed = tracks.map(parseTrack).toList();
       if (parsed.isEmpty) return;

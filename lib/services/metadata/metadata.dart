@@ -37,7 +37,7 @@ class MetadataPlugin {
     YouTubeEngine youtubeEngine,
     PluginConfiguration config,
     Uint8List byteCode, {
-    spotube_plugin.SpotubePlayer Function()? createPlayer,
+    spotube_plugin.Player Function()? createPlayer,
     void Function()? onRequestRefresh,
   }) async {
     final sharedPreferences = await SharedPreferences.getInstance();
