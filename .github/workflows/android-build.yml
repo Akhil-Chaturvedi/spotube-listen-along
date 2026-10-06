@@ -26,7 +26,7 @@ env:
     HIDE_DONATIONS=0
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build_android:
@@ -91,3 +91,17 @@ jobs:
           name: spotube-android-armv7a-apk
           path: build/Spotube-android-armv7a.apk
           if-no-files-found: error
+
+      # Publish the raw .apk to a GitHub Release so it can be downloaded
+      # DIRECTLY (Actions artifacts are always delivered as a .zip; a Release
+      # asset is the actual .apk file).
+      - name: Publish APK to a Release (direct .apk download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag: listen-along-latest
+          name: "Spotube Listen Along (latest)"
+          body: |
+            Direct APK for the Listen Along fork (armeabi-v7a / 32-bit ARM).
+            Built from commit ${{ github.sha }}.
+          files: build/Spotube-android-armv7a.apk
+          make_latest: true
