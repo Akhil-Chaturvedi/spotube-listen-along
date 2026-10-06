@@ -80,14 +80,14 @@ jobs:
           storeFile=upload-keystore.jks
           EOF
 
-      - name: Build Android APK
+      - name: Build Android APK (armeabi-v7a only)
         run: dart cli/cli.dart build --arch=all android
 
       - name: Show output
-        run: ls -la build/Spotube-android-all-arch.apk
+        run: ls -la build/Spotube-android-armv7a.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: spotube-android-apk
-          path: build/Spotube-android-all-arch.apk
+          name: spotube-android-armv7a-apk
+          path: build/Spotube-android-armv7a.apk
           if-no-files-found: error

@@ -18,8 +18,10 @@ class AndroidBuildCommand extends Command with BuildCommandCommonSteps {
   FutureOr? run() async {
     await bootstrap();
 
+    // Build ONLY for armeabi-v7a (32-bit ARM). This fork targets a single
+    // 32-bit armv7a device, so a universal/fat APK is unnecessary and larger.
     await shell.run(
-      "flutter build apk --flavor ${CliEnv.channel.name}",
+      "flutter build apk --flavor ${CliEnv.channel.name} --target-platform android-arm",
     );
 
     final ogApkFile = File(
@@ -33,9 +35,9 @@ class AndroidBuildCommand extends Command with BuildCommandCommonSteps {
     );
 
     await ogApkFile.copy(
-      join(cwd.path, "build", "Spotube-android-all-arch.apk"),
+      join(cwd.path, "build", "Spotube-android-armv7a.apk"),
     );
 
-    stdout.writeln("✅ Built Android Apk and Appbundle");
+    stdout.writeln("✅ Built Android Apk (armeabi-v7a)");
   }
 }
