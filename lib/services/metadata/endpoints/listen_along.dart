@@ -26,8 +26,13 @@ class MetadataPluginListenAlongEndpoint {
   HTInstance? get _instance {
     final plugin = hetu.fetch("metadataPlugin");
     if (plugin is! HTInstance) return null;
-    final member = plugin.memberGet("listenAlong");
-    return member is HTInstance ? member : null;
+    try {
+      final member = plugin.memberGet("listenAlong");
+      return member is HTInstance ? member : null;
+    } catch (_) {
+      // The plugin does not expose a `listenAlong` member.
+      return null;
+    }
   }
 
   bool get isSupported => _instance != null;
