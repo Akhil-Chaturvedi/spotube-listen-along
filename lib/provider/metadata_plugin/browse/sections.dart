@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/metadata_plugin/core/auth.dart';
 import 'package:spotube/provider/metadata_plugin/utils/paginated.dart';
+import 'package:spotube/services/logger/logger.dart';
 
 class MetadataPluginBrowseSectionsNotifier
     extends PaginatedAsyncNotifier<SpotubeBrowseSectionObject<Object>> {
@@ -11,10 +12,24 @@ class MetadataPluginBrowseSectionsNotifier
     int offset,
     int limit,
   ) async {
-    return await (await metadataPlugin).browse.sections(
-          limit: limit,
-          offset: offset,
-        );
+    try {
+      return await (await metadataPlugin).browse.sections(
+            limit: limit,
+            offset: offset,
+          );
+    } catch (e, stack) {
+      // The plugin's sections() may fail for many reasons (buddylist endpoint
+      // down, token expired, network error). Log it but don't crash the entire
+      // Home tab — return an empty page so the user still sees the app.
+      AppLogger.reportError(e, stack);
+      return SpotubePaginationResponseObject(
+        limit: limit,
+        nextOffset: null,
+        total: 0,
+        hasMore: false,
+        items: [],
+      );
+    }
   }
 
   @override
