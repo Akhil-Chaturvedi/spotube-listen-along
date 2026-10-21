@@ -195,6 +195,46 @@ class PlaylistCard extends HookConsumerWidget {
     final isOwner = playlist.owner.id == me.asData?.value?.id &&
         me.asData?.value?.id != null;
 
+    // "Live" cards are marked by the metadata plugin (`isLive: true`) and
+    // represent an entity that is playing elsewhere (e.g. a friend's session).
+    // When the plugin also exposes Listen Along, the play button toggles
+    // mirroring of that entity instead of a one-shot play. The card itself can
+    // still be tapped to open the entity's page and play its tracks normally.
+    final listenAlongId = ref.watch(listenAlongControllerProvider);
+    final listenAlongSupported =
+        ref.watch(metadataPluginProvider).asData?.value?.listenAlong
+                .isSupported ??
+            false;
+    final isLiveCard = playlist.isLive && listenAlongSupported;
+    final isMirroring = isLiveCard && listenAlongId == playlist.id;
+
+    final onMirrorPressed = useCallback(() {
+      ref
+          .read(listenAlongControllerProvider.notifier)
+          .toggle(playlist.id);
+    }, [playlist.id, ref]);
+
+    final effectiveOnPlaybuttonPressed =
+        isLiveCard ? onMirrorPressed : onPlaybuttonPressed;
+
+    // Compact label for the title row's end: "Now" while the entity is active
+    // (matching Spotify's 15-minute window), otherwise a short relative time.
+    // "Now" inherits the title style (it sits in the title row); the relative
+    // time is styled like the subtitle/description line.
+    Widget? trailing;
+    if (playlist.lastActiveAt != null) {
+      final elapsed =
+          DateTime.now().millisecondsSinceEpoch - playlist.lastActiveAt!;
+      trailing = elapsed >= 0 && elapsed <= 15 * 60 * 1000
+          ? const Text('Now')
+          : Text(
+              _shortRelativeTime(elapsed),
+              style: context.theme.typography.small.copyWith(
+                color: context.theme.colorScheme.mutedForeground,
+              ),
+            );
+    }
+
     if (_isTile) {
       return PlaybuttonTile(
         title: playlist.name,
@@ -205,66 +245,36 @@ class PlaylistCard extends HookConsumerWidget {
         isLoading: isLoading,
         isOwner: isOwner,
         onTap: onTap,
-        onPlaybuttonPressed: onPlaybuttonPressed,
+        onPlaybuttonPressed: effectiveOnPlaybuttonPressed,
         onAddToQueuePressed: onAddToQueuePressed,
       );
     }
-
-    // Friend Activity cards are synthetic playlists with id `friend-<userId>`.
-    // When the active metadata plugin supports Listen Along, surface a toggle
-    // right on the card so the user can mirror a friend from Explore.
-    final listenAlongUserId = ref.watch(listenAlongControllerProvider);
-    final isFriendCard = playlist.id.startsWith('friend-');
-    final friendUserId = isFriendCard
-        ? playlist.id.substring('friend-'.length)
-        : null;
-    final listenAlongSupported =
-        ref.watch(metadataPluginProvider).asData?.value?.listenAlong
-            .isSupported ??
-            false;
-
-    final topLeftBadge = (isFriendCard && listenAlongSupported)
-        ? _ListenAlongBadge(
-            active: listenAlongUserId == friendUserId,
-            onPressed: () {
-              ref
-                  .read(listenAlongControllerProvider.notifier)
-                  .toggle(friendUserId!);
-            },
-          )
-        : null;
 
     return PlaybuttonCard(
       title: playlist.name,
       description: playlist.description,
       image: null,
       imageUrl: imageUrl,
-      isPlaying: isPlaylistPlaying,
+      isPlaying: isPlaylistPlaying || isMirroring,
       isLoading: isLoading,
       isOwner: isOwner,
-      topLeftBadge: topLeftBadge,
+      trailing: trailing,
       onTap: onTap,
-      onPlaybuttonPressed: onPlaybuttonPressed,
+      onPlaybuttonPressed: effectiveOnPlaybuttonPressed,
       onAddToQueuePressed: onAddToQueuePressed,
     );
   }
 }
 
-class _ListenAlongBadge extends StatelessWidget {
-  final bool active;
-  final VoidCallback onPressed;
-
-  const _ListenAlongBadge({required this.active, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton.secondary(
-      icon: Icon(
-        active ? Icons.headphones : Icons.headphones_outlined,
-        size: 16,
-      ),
-      size: ButtonSize.small,
-      onPressed: onPressed,
-    );
-  }
+/// Compact relative time in Spotify's buddy-feed style: "23m", "2h", "3d",
+/// "1w". Inputs over a week keep counting weeks.
+String _shortRelativeTime(int elapsedMs) {
+  final minutes = elapsedMs ~/ 60000;
+  if (minutes < 60) return '${minutes}m';
+  final hours = minutes ~/ 60;
+  if (hours < 24) return '${hours}h';
+  final days = hours ~/ 24;
+  if (days < 7) return '${days}d';
+  final weeks = days ~/ 7;
+  return '${weeks}w';
 }

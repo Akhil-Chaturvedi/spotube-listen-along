@@ -22,6 +22,11 @@ class PlaybuttonCard extends StatelessWidget {
   /// plugins that expose extra per-card actions (e.g. Listen Along).
   final Widget? topLeftBadge;
 
+  /// Optional widget shown at the end (right side) of the title row. Used for
+  /// compact per-card metadata labels (e.g. "Now" / "2h" for live entities).
+  /// The caller controls the text style so it can match the title or subtitle.
+  final Widget? trailing;
+
   const PlaybuttonCard({
     required this.isPlaying,
     required this.isLoading,
@@ -34,6 +39,7 @@ class PlaybuttonCard extends StatelessWidget {
     this.imageUrl,
     this.image,
     this.topLeftBadge,
+    this.trailing,
     super.key,
   }) : assert(
           imageUrl != null || image != null,
@@ -163,10 +169,17 @@ class PlaybuttonCard extends StatelessWidget {
         ),
         title: Tooltip(
           tooltip: TooltipContainer(child: Text(title)).call,
-          child: Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (trailing != null) ...[const Gap(4), trailing!],
+            ],
           ),
         ),
         subtitle: Text(

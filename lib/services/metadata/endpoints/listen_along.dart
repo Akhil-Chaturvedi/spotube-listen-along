@@ -21,6 +21,11 @@ class MetadataPluginListenAlongEndpoint {
   /// Poll interval for mirroring the friend's current track.
   static const pollInterval = Duration(seconds: 10);
 
+  /// Notified with the plugin's current active id after every tick, so the
+  /// host can sync its UI state when the plugin auto-stops (e.g. the live
+  /// entity went idle). Null means mirroring stopped.
+  void Function(String? activeId)? onActiveIdChanged;
+
   MetadataPluginListenAlongEndpoint(this.hetu);
 
   HTInstance? get _instance {
@@ -74,6 +79,15 @@ class MetadataPluginListenAlongEndpoint {
     if (instance == null) return;
     // Fire and forget; the plugin guards its own state.
     instance.invoke("tick");
+
+    // Sync mirroring state: the plugin may have auto-stopped (the live entity
+    // went idle), in which case its activeUserId() becomes null.
+    final activeId = activeUserId();
+    if (activeId == null) {
+      _timer?.cancel();
+      _timer = null;
+    }
+    onActiveIdChanged?.call(activeId);
   }
 
   void dispose() {

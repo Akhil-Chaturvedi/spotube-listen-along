@@ -407,6 +407,8 @@ _$SpotubeSimplePlaylistObjectImpl _$$SpotubeSimplePlaylistObjectImplFromJson(
                   Map<String, dynamic>.from(e as Map)))
               .toList() ??
           const [],
+      isLive: json['isLive'] as bool? ?? false,
+      lastActiveAt: (json['lastActiveAt'] as num?)?.toInt(),
     );
 
 Map<String, dynamic> _$$SpotubeSimplePlaylistObjectImplToJson(
@@ -418,6 +420,8 @@ Map<String, dynamic> _$$SpotubeSimplePlaylistObjectImplToJson(
       'externalUri': instance.externalUri,
       'owner': instance.owner.toJson(),
       'images': instance.images.map((e) => e.toJson()).toList(),
+      'isLive': instance.isLive,
+      'lastActiveAt': instance.lastActiveAt,
     };
 
 _$SpotubeSearchResponseObjectImpl _$$SpotubeSearchResponseObjectImplFromJson(

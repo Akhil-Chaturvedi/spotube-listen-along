@@ -4378,6 +4378,8 @@ mixin _$SpotubeSimplePlaylistObject {
   String get externalUri => throw _privateConstructorUsedError;
   SpotubeUserObject get owner => throw _privateConstructorUsedError;
   List<SpotubeImageObject> get images => throw _privateConstructorUsedError;
+  bool get isLive => throw _privateConstructorUsedError;
+  int? get lastActiveAt => throw _privateConstructorUsedError;
 
   /// Serializes this SpotubeSimplePlaylistObject to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
@@ -4403,7 +4405,9 @@ abstract class $SpotubeSimplePlaylistObjectCopyWith<$Res> {
       String description,
       String externalUri,
       SpotubeUserObject owner,
-      List<SpotubeImageObject> images});
+      List<SpotubeImageObject> images,
+      bool isLive,
+      int? lastActiveAt});
 
   $SpotubeUserObjectCopyWith<$Res> get owner;
 }
@@ -4430,6 +4434,8 @@ class _$SpotubeSimplePlaylistObjectCopyWithImpl<$Res,
     Object? externalUri = null,
     Object? owner = null,
     Object? images = null,
+    Object? isLive = null,
+    Object? lastActiveAt = null,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -4456,6 +4462,14 @@ class _$SpotubeSimplePlaylistObjectCopyWithImpl<$Res,
           ? _value.images
           : images // ignore: cast_nullable_to_non_nullable
               as List<SpotubeImageObject>,
+      isLive: null == isLive
+          ? _value.isLive
+          : isLive // ignore: cast_nullable_to_non_nullable
+              as bool,
+      lastActiveAt: null == lastActiveAt
+          ? _value.lastActiveAt
+          : lastActiveAt // ignore: cast_nullable_to_non_nullable
+              as int?,
     ) as $Val);
   }
 
@@ -4485,7 +4499,9 @@ abstract class _$$SpotubeSimplePlaylistObjectImplCopyWith<$Res>
       String description,
       String externalUri,
       SpotubeUserObject owner,
-      List<SpotubeImageObject> images});
+      List<SpotubeImageObject> images,
+      bool isLive,
+      int? lastActiveAt});
 
   @override
   $SpotubeUserObjectCopyWith<$Res> get owner;
@@ -4512,6 +4528,8 @@ class __$$SpotubeSimplePlaylistObjectImplCopyWithImpl<$Res>
     Object? externalUri = null,
     Object? owner = null,
     Object? images = null,
+    Object? isLive = null,
+    Object? lastActiveAt = null,
   }) {
     return _then(_$SpotubeSimplePlaylistObjectImpl(
       id: null == id
@@ -4538,6 +4556,14 @@ class __$$SpotubeSimplePlaylistObjectImplCopyWithImpl<$Res>
           ? _value._images
           : images // ignore: cast_nullable_to_non_nullable
               as List<SpotubeImageObject>,
+      isLive: null == isLive
+          ? _value.isLive
+          : isLive // ignore: cast_nullable_to_non_nullable
+              as bool,
+      lastActiveAt: null == lastActiveAt
+          ? _value.lastActiveAt
+          : lastActiveAt // ignore: cast_nullable_to_non_nullable
+              as int?,
     ));
   }
 }
@@ -4552,7 +4578,9 @@ class _$SpotubeSimplePlaylistObjectImpl
       required this.description,
       required this.externalUri,
       required this.owner,
-      final List<SpotubeImageObject> images = const []})
+      final List<SpotubeImageObject> images = const [],
+      this.isLive = false,
+      this.lastActiveAt})
       : _images = images;
 
   factory _$SpotubeSimplePlaylistObjectImpl.fromJson(
@@ -4579,8 +4607,15 @@ class _$SpotubeSimplePlaylistObjectImpl
   }
 
   @override
+  @JsonKey()
+  final bool isLive;
+
+  @override
+  final int? lastActiveAt;
+
+  @override
   String toString() {
-    return 'SpotubeSimplePlaylistObject(id: $id, name: $name, description: $description, externalUri: $externalUri, owner: $owner, images: $images)';
+    return 'SpotubeSimplePlaylistObject(id: $id, name: $name, description: $description, externalUri: $externalUri, owner: $owner, images: $images, isLive: $isLive, lastActiveAt: $lastActiveAt)';
   }
 
   @override
@@ -4595,13 +4630,17 @@ class _$SpotubeSimplePlaylistObjectImpl
             (identical(other.externalUri, externalUri) ||
                 other.externalUri == externalUri) &&
             (identical(other.owner, owner) || other.owner == owner) &&
-            const DeepCollectionEquality().equals(other._images, _images));
+            const DeepCollectionEquality().equals(other._images, _images) &&
+            (identical(other.isLive, isLive) || other.isLive == isLive) &&
+            (identical(other.lastActiveAt, lastActiveAt) ||
+                other.lastActiveAt == lastActiveAt));
   }
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, id, name, description,
-      externalUri, owner, const DeepCollectionEquality().hash(_images));
+      externalUri, owner, const DeepCollectionEquality().hash(_images),
+      isLive, lastActiveAt);
 
   /// Create a copy of SpotubeSimplePlaylistObject
   /// with the given fields replaced by the non-null parameter values.
@@ -4628,7 +4667,9 @@ abstract class _SpotubeSimplePlaylistObject
           required final String description,
           required final String externalUri,
           required final SpotubeUserObject owner,
-          final List<SpotubeImageObject> images}) =
+          final List<SpotubeImageObject> images = const [],
+          final bool isLive = false,
+          final int? lastActiveAt}) =
       _$SpotubeSimplePlaylistObjectImpl;
 
   factory _SpotubeSimplePlaylistObject.fromJson(Map<String, dynamic> json) =
@@ -4646,6 +4687,10 @@ abstract class _SpotubeSimplePlaylistObject
   SpotubeUserObject get owner;
   @override
   List<SpotubeImageObject> get images;
+  @override
+  bool get isLive;
+  @override
+  int? get lastActiveAt;
 
   /// Create a copy of SpotubeSimplePlaylistObject
   /// with the given fields replaced by the non-null parameter values.

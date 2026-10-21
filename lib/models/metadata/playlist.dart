@@ -27,6 +27,14 @@ class SpotubeSimplePlaylistObject with _$SpotubeSimplePlaylistObject {
     required String externalUri,
     required SpotubeUserObject owner,
     @Default([]) List<SpotubeImageObject> images,
+    /// Generic marker for metadata plugins: this card represents a *live*
+    /// entity that is playing elsewhere (e.g. a friend's session). Hosts may
+    /// offer "sync/mirror" behavior on such cards. Optional and ignored by
+    /// plugins that don't set it.
+    @Default(false) bool isLive,
+    /// Generic timestamp (epoch ms) of when this entity was last active.
+    /// Used to render a relative-time / "now" label on cards. Optional.
+    int? lastActiveAt,
   }) = _SpotubeSimplePlaylistObject;
 
   factory SpotubeSimplePlaylistObject.fromJson(Map<String, dynamic> json) =>
