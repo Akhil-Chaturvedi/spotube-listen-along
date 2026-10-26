@@ -103,6 +103,25 @@ abstract class KVStoreService {
     return _youtubeEnginePaths?[engine.name];
   }
 
+  /// Tracks hidden from specific playlists in Spotube only ("Remove from this
+  /// playlist"). Keyed by playlistId -> list of hidden trackIds. Purely local:
+  /// the metadata source's playlist is never touched.
+  static Map<String, List<String>> get hiddenPlaylistTracks {
+    final raw = sharedPreferences.getString('hiddenPlaylistTracks');
+    if (raw == null) return {};
+    return (jsonDecode(raw) as Map<String, dynamic>).map(
+      (key, value) => MapEntry(key, (value as List).cast<String>()),
+    );
+  }
+
+  static Future<void> setHiddenPlaylistTracks(
+    Map<String, List<String>> value,
+  ) async =>
+      await sharedPreferences.setString(
+        'hiddenPlaylistTracks',
+        jsonEncode(value),
+      );
+
   static Future<void> setYoutubeEnginePath(
     YoutubeClientEngine engine,
     String path,

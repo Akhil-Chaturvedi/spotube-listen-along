@@ -8,6 +8,7 @@ import 'package:spotube/components/ui/button_tile.dart';
 import 'package:spotube/extensions/constrains.dart';
 import 'package:spotube/extensions/context.dart';
 import 'package:spotube/models/metadata/metadata.dart';
+import 'package:spotube/provider/metadata_plugin/metadata_plugin_provider.dart';
 import 'package:spotube/provider/track_options/track_options_provider.dart';
 
 /// [track] must be a [SpotubeFullTrackObject] or [SpotubeLocalTrackObject]
@@ -35,6 +36,10 @@ class TrackOptions extends HookConsumerWidget {
     final mediaQuery = MediaQuery.of(context);
 
     final trackOptionActions = ref.watch(trackOptionActionsProvider(track));
+    // Name of the default metadata source (e.g. "Spotify") for labels.
+    final sourceName = ref.watch(metadataPluginsProvider).asData?.value
+            .defaultMetadataPluginConfig?.name ??
+        "source playlist";
     final (
       :isBlacklisted,
       :isInDownloadQueue,
@@ -182,7 +187,7 @@ class TrackOptions extends HookConsumerWidget {
             title: Text(context.l10n.add_to_playlist),
           ),
         ],
-        if (userPlaylist && isAuthenticated && !isLocalTrack)
+        if (userPlaylist && isAuthenticated && !isLocalTrack) ...[
           ButtonTile(
             style: ButtonVariance.menu,
             onPressed: () async {
@@ -194,8 +199,25 @@ class TrackOptions extends HookConsumerWidget {
               onTapItem?.call();
             },
             leading: const Icon(SpotubeIcons.removeFilled),
-            title: Text(context.l10n.remove_from_playlist),
+            title: Text("Remove from this playlist"),
           ),
+          ButtonTile(
+            style: ButtonVariance.menu,
+            onPressed: () async {
+              await trackOptionActions.action(
+                rootNavigatorKey.currentContext!,
+                TrackOptionValue.removeFromSourcePlaylist,
+                playlistId,
+              );
+              onTapItem?.call();
+            },
+            leading: Icon(
+              SpotubeIcons.trash,
+              color: Colors.red[400],
+            ),
+            title: Text("Remove from $sourceName playlist"),
+          ),
+        ],
         if (!isLocalTrack)
           ButtonTile(
             style: ButtonVariance.menu,
