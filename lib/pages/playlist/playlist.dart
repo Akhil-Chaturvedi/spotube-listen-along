@@ -10,7 +10,6 @@ import 'package:spotube/extensions/context.dart';
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/metadata_plugin/library/playlists.dart';
 import 'package:auto_route/auto_route.dart';
-import 'package:spotube/provider/hidden_playlist_tracks.dart';
 import 'package:spotube/provider/metadata_plugin/tracks/playlist.dart';
 import 'package:spotube/provider/metadata_plugin/utils/common.dart';
 
@@ -44,15 +43,6 @@ class PlaylistPage extends HookConsumerWidget {
     final tracks = ref.watch(metadataPluginPlaylistTracksProvider(playlist.id));
     final tracksNotifier =
         ref.watch(metadataPluginPlaylistTracksProvider(playlist.id).notifier);
-
-    // Hide tracks removed via "Remove from this playlist" (Spotube-local).
-    final hiddenTrackIds =
-        ref.watch(hiddenPlaylistTracksProvider.select(
-      (value) => value[playlist.id],
-    ));
-    final visibleTracks = (tracks.asData?.value.items ?? [])
-        .where((t) => !(hiddenTrackIds?.contains(t.id) ?? false))
-        .toList();
     final isFavoritePlaylist =
         ref.watch(metadataPluginIsSavedPlaylistProvider(playlist.id));
 
@@ -88,7 +78,7 @@ class PlaylistPage extends HookConsumerWidget {
           description: playlist.description,
           owner: playlist.owner.name,
           ownerImage: playlist.owner.images.lastOrNull?.url,
-          tracks: visibleTracks,
+          tracks: tracks.asData?.value.items ?? [],
           error: tracks.error,
           routePath: '/playlist/${playlist.id}',
           isLiked: isFavoritePlaylist.asData?.value ?? false,

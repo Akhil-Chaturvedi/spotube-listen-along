@@ -14,7 +14,6 @@ import 'package:spotube/models/database/database.dart';
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/audio_player/audio_player.dart';
 import 'package:spotube/provider/blacklist_provider.dart';
-import 'package:spotube/provider/hidden_playlist_tracks.dart';
 import 'package:spotube/provider/download_manager_provider.dart';
 import 'package:spotube/provider/local_tracks/local_tracks_provider.dart';
 import 'package:spotube/provider/metadata_plugin/core/auth.dart';
@@ -29,7 +28,6 @@ enum TrackOptionValue {
   addToPlaylist,
   addToQueue,
   removeFromPlaylist,
-  removeFromSourcePlaylist,
   removeFromQueue,
   blacklist,
   delete,
@@ -218,63 +216,7 @@ class TrackOptionsActions {
         actionAddToPlaylist(context, playlistId);
         break;
       case TrackOptionValue.removeFromPlaylist:
-        // Local-only removal: hide the track from this playlist in Spotube.
-        // The metadata source's playlist is never touched.
-        if (playlistId == null || playlistId.isEmpty) break;
-        await ref
-            .read(hiddenPlaylistTracksProvider.notifier)
-            .hide(playlistId, track.id);
-
-        if (context.mounted) {
-          showToast(
-            context: context,
-            location: ToastLocation.topRight,
-            builder: (context, overlay) {
-              return SurfaceCard(
-                child: Text(
-                  "Removed from this playlist (Spotube only)",
-                  textAlign: TextAlign.center,
-                ),
-              );
-            },
-          );
-        }
-        break;
-      case TrackOptionValue.removeFromSourcePlaylist:
-        // Real deletion: removes the track from the playlist on the default
-        // metadata source (e.g. Spotify). Confirm first — destructive.
-        if (playlistId == null || playlistId.isEmpty) break;
-        final plugin = await ref.read(metadataPluginProvider.future);
-        final sourceName =
-            ref.read(metadataPluginsProvider).asData?.value
-                .defaultMetadataPluginConfig?.name ??
-            "the metadata source";
-
-        final confirmed = await showPromptDialog(
-          context: context,
-          title: context.l10n.remove_from_playlist,
-          message:
-              "Remove this track from your playlist on $sourceName as well?",
-          okText: "Remove",
-        );
-        if (!confirmed) break;
-
-        await favoritePlaylistsNotifier.removeTracks(playlistId, [track.id]);
-
-        if (context.mounted) {
-          showToast(
-            context: context,
-            location: ToastLocation.topRight,
-            builder: (context, overlay) {
-              return SurfaceCard(
-                child: Text(
-                  "Removed from $sourceName",
-                  textAlign: TextAlign.center,
-                ),
-              );
-            },
-          );
-        }
+        favoritePlaylistsNotifier.removeTracks(playlistId ?? "", [track.id]);
         break;
       case TrackOptionValue.blacklist:
         final isBlacklisted = blacklist.contains(track);
