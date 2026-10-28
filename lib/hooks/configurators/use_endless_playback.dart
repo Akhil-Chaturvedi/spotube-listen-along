@@ -20,6 +20,9 @@ void useEndlessPlayback(WidgetRef ref) {
       void listener(int index) async {
         try {
           final playlist = ref.read(audioPlayerProvider);
+          // Empty queue: `tracks.last` would throw "Bad state: No element"
+          // (index -1 == length - 1 == -1 passes the check below).
+          if (playlist.tracks.isEmpty) return;
           if (index != playlist.tracks.length - 1) return;
 
           final track = playlist.tracks.last;

@@ -57,14 +57,22 @@ class ServerPlaybackRoutes {
     Request request,
     String trackId,
   ) async {
-    final track =
-        playlist.tracks.firstWhere((element) => element.id == trackId);
+    // Track may no longer be in the queue (removed, skipped before sourcing
+    // finished). firstWhere without orElse throws "Bad state: No element",
+    // turning a normal race into a 500 - the caller turns null into a 404.
+    final trackIndex = playlist.tracks.indexWhere(
+      (element) => element.id == trackId,
+    );
+    if (trackIndex == -1) return null;
+    final track = playlist.tracks[trackIndex];
 
     final activeSourcedTrack =
         await ref.read(activeTrackSourcesProvider.future);
 
-    final media = audioPlayer.playlist.medias
-        .firstWhere((e) => e.uri == request.requestedUri.toString());
+    final mediaIndex = audioPlayer.playlist.medias
+        .indexWhere((e) => e.uri == request.requestedUri.toString());
+    if (mediaIndex == -1) return null;
+    final media = audioPlayer.playlist.medias[mediaIndex];
     final spotubeMedia =
         media is SpotubeMedia ? media : SpotubeMedia.media(media);
     final sourcedTrack = activeSourcedTrack?.track.id == track.id

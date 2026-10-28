@@ -21,6 +21,12 @@ class MetadataPluginListenAlongEndpoint {
   /// Poll interval for mirroring the friend's current track.
   static const pollInterval = Duration(seconds: 10);
 
+  /// Slow maintenance loop: many plugins use [tick] for periodic upkeep (e.g.
+  /// refreshing their own auth token) even when nothing is being mirrored.
+  /// Fire-and-forget and cheap - the plugin early-returns when idle.
+  static const keepAliveInterval = Duration(minutes: 1);
+  Timer? _keepAliveTimer;
+
   /// Notified with the plugin's current active id after every tick, so the
   /// host can sync its UI state when the plugin auto-stops (e.g. the live
   /// entity went idle). Null means mirroring stopped.
@@ -90,8 +96,22 @@ class MetadataPluginListenAlongEndpoint {
     onActiveIdChanged?.call(activeId);
   }
 
+  /// Starts the slow maintenance loop (idempotent). Call once after the
+  /// plugin has loaded. Skipped while the faster mirroring loop is running,
+  /// since that one already ticks.
+  void startKeepAlive() {
+    _keepAliveTimer ??= Timer.periodic(keepAliveInterval, (_) {
+      final instance = _instance;
+      if (instance == null) return;
+      if (_timer != null) return; // mirroring loop is already ticking
+      instance.invoke("tick");
+    });
+  }
+
   void dispose() {
     _timer?.cancel();
     _timer = null;
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
   }
 }

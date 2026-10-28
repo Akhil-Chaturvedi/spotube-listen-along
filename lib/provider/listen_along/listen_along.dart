@@ -6,7 +6,18 @@ import 'package:spotube/provider/metadata_plugin/metadata_plugin_provider.dart';
 /// null. Backed by the plugin's own `listenAlong.activeUserId()`.
 class ListenAlongController extends Notifier<String?> {
   @override
-  String? build() => null;
+  String? build() {
+    // Keep the plugin's internal clock alive (generic plugins may use tick()
+    // for maintenance such as refreshing their auth token) even when nothing
+    // is being mirrored. Idempotent; safe to call on provider rebuilds.
+    _startKeepAlive();
+    return null;
+  }
+
+  void _startKeepAlive() async {
+    final plugin = await ref.read(metadataPluginProvider.future);
+    plugin?.listenAlong.startKeepAlive();
+  }
 
   Future<void> start(String id) async {
     final plugin = await ref.read(metadataPluginProvider.future);
