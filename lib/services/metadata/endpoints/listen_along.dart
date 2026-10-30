@@ -100,11 +100,15 @@ class MetadataPluginListenAlongEndpoint {
   /// plugin has loaded. Skipped while the faster mirroring loop is running,
   /// since that one already ticks.
   void startKeepAlive() {
-    _keepAliveTimer ??= Timer.periodic(keepAliveInterval, (_) {
+    _keepAliveTimer ??= Timer.periodic(keepAliveInterval, (_) async {
       final instance = _instance;
       if (instance == null) return;
       if (_timer != null) return; // mirroring loop is already ticking
-      instance.invoke("tick");
+      try {
+        await instance.invoke("tick");
+      } catch (_) {
+        // Plugin maintenance is best-effort; never let it kill the clock.
+      }
     });
   }
 

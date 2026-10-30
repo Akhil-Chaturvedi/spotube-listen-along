@@ -192,5 +192,10 @@ class MetadataPlugin {
     user = MetadataPluginUserEndpoint(hetu);
     core = MetadataPluginCore(hetu);
     listenAlong = MetadataPluginListenAlongEndpoint(hetu);
+    // Generic plugin maintenance clock (plugins may use tick() for periodic
+    // upkeep like refreshing their own auth token). Must start at plugin load
+    // - NOT when some UI first renders - so upkeep never depends on a widget
+    // happening to be on screen.
+    listenAlong.startKeepAlive();
   }
 }
