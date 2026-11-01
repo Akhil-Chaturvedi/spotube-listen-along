@@ -26,6 +26,7 @@ import 'package:spotube/services/metadata/endpoints/track.dart';
 import 'package:spotube/services/metadata/endpoints/core.dart';
 import 'package:spotube/services/metadata/endpoints/listen_along.dart';
 import 'package:spotube/services/metadata/endpoints/user.dart';
+import 'package:spotube/services/spotify_session/spotify_session.dart';
 import 'package:spotube/services/youtube_engine/youtube_engine.dart';
 
 const defaultMetadataLimit = "20";
@@ -161,10 +162,18 @@ class MetadataPlugin {
       var metadataPlugin = Plugin()
       """);
 
-    return MetadataPlugin._(hetu);
+    // Native Spotify session upkeep (login5 StoredCredential -> access token
+    // for the Friend Activity data path). Bridges the plugin's LocalStorage
+    // (la_blob/la_username -> la_token/la_token_exp) with a native protobuf
+    // exchange the Hetu sandbox cannot perform itself.
+    final spotifySession = SpotifySessionService(sharedPreferences, config.slug)
+      ..start();
+
+    return MetadataPlugin._(hetu, spotifySession);
   }
 
   final Hetu hetu;
+  final SpotifySessionService spotifySession;
 
   late final MetadataAuthEndpoint auth;
 
@@ -179,7 +188,7 @@ class MetadataPlugin {
   late final MetadataPluginCore core;
   late final MetadataPluginListenAlongEndpoint listenAlong;
 
-  MetadataPlugin._(this.hetu) {
+  MetadataPlugin._(this.hetu, this.spotifySession) {
     auth = MetadataAuthEndpoint(hetu);
 
     audioSource = MetadataPluginAudioSourceEndpoint(hetu);
