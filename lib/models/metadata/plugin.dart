@@ -1,6 +1,6 @@
 part of 'metadata.dart';
 
-enum PluginApis { webview, localstorage, timezone }
+enum PluginApis { webview, localstorage, timezone, form }
 
 enum PluginAbilities {
   authentication,

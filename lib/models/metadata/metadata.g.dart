@@ -576,6 +576,7 @@ const _$PluginApisEnumMap = {
   PluginApis.webview: 'webview',
   PluginApis.localstorage: 'localstorage',
   PluginApis.timezone: 'timezone',
+  PluginApis.form: 'form',
 };
 
 const _$PluginAbilitiesEnumMap = {
