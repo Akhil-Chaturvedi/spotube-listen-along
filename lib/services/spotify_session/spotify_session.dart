@@ -363,6 +363,133 @@ class SpotifySessionService {
 
     await prefs.setString(_key('la_feed'), jsonEncode(activities));
     await prefs.setInt(_key('la_feed_ts'), DateTime.now().millisecondsSinceEpoch);
+
+    // Enrichment: resolve full track objects (name/artist/album/art) for the
+    // feed so the PLUGIN never has to call the rate-limited public API itself
+    // (web tokens 429 easily; the hetu sandbox also cannot catch errors).
+    // Only fires when the feed's track set actually changed - typically a
+    // handful of calls per hour. The signature is recorded only on success so
+    // failures retry on the next tick.
+    final signature = activities
+        .map((a) => '${a['username']}|${a['entityUri']}')
+        .toList()
+      ..sort();
+    final signatureStr = signature.join(';');
+    if (signatureStr == prefs.getString(_key('la_feed_sig'))) {
+      return;
+    }
+    if (await _enrichFeed(activities)) {
+      await prefs.setString(_key('la_feed_sig'), signatureStr);
+    }
+  }
+
+  /// Resolves full track metadata for [activities] and rewrites `la_feed`
+  /// with a `track` object per entry. Returns false when enrichment was
+  /// skipped/failed (the caller then does NOT record the signature, so the
+  /// next tick retries).
+  Future<bool> _enrichFeed(List<Map<String, dynamic>> activities) async {
+    // The plugin's metadata (sp_dc) credentials hold the web access token
+    // used for api.spotify.com.
+    final credsRaw = prefs.getString(_key('credentials'));
+    String? apiToken;
+    if (credsRaw != null && credsRaw.isNotEmpty) {
+      try {
+        apiToken =
+            (jsonDecode(credsRaw) as Map)['accessToken'] as String?;
+      } catch (_) {}
+    }
+    if (apiToken == null || apiToken.isEmpty) return false;
+
+    final ids = activities
+        .map((a) => a['entityUri'] as String?)
+        .whereType<String>()
+        .where((u) => u.startsWith('spotify:track:'))
+        .map((u) => u.substring('spotify:track:'.length))
+        .toSet()
+        .toList();
+    if (ids.isEmpty) return true;
+
+    final req = await HttpClient().getUrl(
+        Uri.parse('https://api.spotify.com/v1/tracks?ids=${ids.join(",")}'));
+    req.headers.set('Authorization', 'Bearer $apiToken');
+    req.headers.set('Accept', 'application/json');
+    final res = await req.close();
+    if (res.statusCode != 200) {
+      // Leave the feed un-enriched; the plugin renders thin tracks and the
+      // next tick retries.
+      return false;
+    }
+    final resBody = await res.fold<BytesBuilder>(
+      BytesBuilder(),
+      (bb, d) => bb..add(d),
+    ).then((bb) => bb.takeBytes());
+    final json = jsonDecode(utf8.decode(resBody)) as Map<String, dynamic>;
+    final tracks = <String, Map<String, dynamic>>{};
+    for (final e in (json['tracks'] as List? ?? [])) {
+      if (e is Map && e['id'] != null) {
+        tracks[e['id'] as String] = _mapRestTrack(Map<String, dynamic>.from(e));
+      }
+    }
+
+    final enriched = activities.map((a) {
+      final uri = a['entityUri'] as String?;
+      if (uri != null && uri.startsWith('spotify:track:')) {
+        final t = tracks[uri.substring('spotify:track:'.length)];
+        if (t != null) {
+          return {...a, 'track': t};
+        }
+      }
+      return a;
+    }).toList();
+
+    await prefs.setString(_key('la_feed'), jsonEncode(enriched));
+    return true;
+  }
+
+  /// Public-API track JSON -> the plugin's full-track model shape.
+  static Map<String, dynamic> _mapRestTrack(Map<String, dynamic> t) {
+    final album = Map<String, dynamic>.from((t['album'] ?? {}) as Map);
+    final rawType = album['album_type'] ?? 'album';
+    final albumType =
+        (rawType == 'single' || rawType == 'compilation') ? rawType : 'album';
+    final images = ((album['images'] ?? []) as List)
+        .whereType<Map>()
+        .map((img) => {
+              'url': img['url'],
+              'width': img['width'],
+              'height': img['height'],
+            })
+        .toList();
+    return {
+      'id': t['id'],
+      'name': t['name'],
+      'externalUri': 'spotify:track:${t['id']}',
+      'explicit': t['explicit'] == true,
+      'durationMs': t['duration_ms'] ?? 0,
+      'isrc':
+          ((t['external_ids'] ?? {}) as Map)['isrc'] ?? '',
+      'artists': ((t['artists'] ?? []) as List)
+          .whereType<Map>()
+          .map((a) => {
+                'id': a['id'],
+                'name': a['name'],
+                'externalUri': 'spotify:artist:${a['id']}',
+                'images': const [],
+              })
+          .toList(),
+      'album': {
+        'id': album['id'],
+        'name': album['name'],
+        'externalUri': album['id'] != null
+            ? 'spotify:album:${album['id']}'
+            : '',
+        'releaseDate': album['release_date'] ?? '',
+        'releaseDatePrecision': album['release_date_precision'] ?? 'year',
+        'artists': const [],
+        'images': images,
+        'albumType': albumType,
+      },
+    };
   }
 
   /// "2026-11-01T09:59:10.538Z" -> epoch ms.
