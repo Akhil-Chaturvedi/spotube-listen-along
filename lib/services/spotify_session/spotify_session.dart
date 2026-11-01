@@ -115,12 +115,17 @@ class SpotifySessionService {
   /// How often the feed is polled and the token freshness checked.
   static const tickInterval = Duration(seconds: 20);
 
+  /// How often the (slow-changing) friend list is refreshed.
+  static const friendsInterval = Duration(minutes: 30);
+  DateTime _friendsFetchedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
   final SharedPreferences prefs;
   final String pluginSlug;
   Timer? _timer;
   bool _running = false;
   String? _token;
   int _tokenExpMs = 0;
+  String? _me;
 
   SpotifySessionService(this.prefs, this.pluginSlug);
 
@@ -138,13 +143,23 @@ class SpotifySessionService {
 
   Future<void> _tick() async {
     try {
-      final friends = _configuredFriends();
       final needsToken =
           _token == null || DateTime.now().millisecondsSinceEpoch > _tokenExpMs - 10 * 60 * 1000;
       if (needsToken) {
         await _ensureLogin5();
       }
-      if (_token == null || friends.isEmpty) return;
+      if (_token == null || _me == null) return;
+
+      // Friend list: auto-discovered from the follow graph (user-profile-view
+      // v3, the same endpoint the desktop Profile -> Following tab uses).
+      // Refreshed rarely; the manual la_friends list is unioned in so users
+      // can add people they don't follow.
+      if (DateTime.now().difference(_friendsFetchedAt) > friendsInterval) {
+        await _refreshFriends();
+      }
+
+      final friends = _allFriendUsernames();
+      if (friends.isEmpty) return;
       await _refreshFeed(friends);
     } catch (_) {
       // Upkeep is best-effort; a failed tick leaves the previous feed/token
@@ -152,7 +167,8 @@ class SpotifySessionService {
     }
   }
 
-  List<String> _configuredFriends() {
+  /// Manual additions from the plugin's setup form (comma separated).
+  List<String> _manualFriends() {
     final raw = prefs.getString(_key('la_friends')) ?? '';
     return raw
         .split(',')
@@ -161,10 +177,63 @@ class SpotifySessionService {
         .toList();
   }
 
+  /// Auto (follow graph) + manual usernames.
+  List<String> _allFriendUsernames() {
+    final out = <String>[];
+    final autoRaw = prefs.getString(_key('la_friends_auto'));
+    if (autoRaw != null && autoRaw.isNotEmpty) {
+      try {
+        final list = jsonDecode(autoRaw) as List;
+        for (final e in list) {
+          if (e is Map && e['username'] is String) {
+            out.add(e['username'] as String);
+          }
+        }
+      } catch (_) {}
+    }
+    for (final u in _manualFriends()) {
+      if (!out.contains(u)) out.add(u);
+    }
+    return out;
+  }
+
+  Future<void> _refreshFriends() async {
+    final req = await HttpClient().getUrl(Uri.parse(
+        'https://spclient.wg.spotify.com/user-profile-view/v3/profile/$_me/following?limit=200'));
+    req.headers.set('Authorization', 'Bearer $_token');
+    req.headers.set('Accept', 'application/json');
+    req.headers.set('User-Agent', userAgent);
+    final res = await req.close();
+    final resBody = await res.fold<BytesBuilder>(
+      BytesBuilder(),
+      (bb, d) => bb..add(d),
+    ).then((bb) => bb.takeBytes());
+    if (res.statusCode != 200) {
+      throw const HttpException('user-profile-view following failed');
+    }
+    final json = jsonDecode(utf8.decode(resBody)) as Map<String, dynamic>;
+    final profiles = (json['profiles'] as List? ?? [])
+        .where((e) => e is Map)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        // The endpoint mixes artists in; the friend feed is user-to-user only.
+        .where((p) => (p['uri'] as String? ?? '').startsWith('spotify:user:'))
+        .map((p) {
+          final uri = p['uri'] as String;
+          return {
+            'username': uri.substring('spotify:user:'.length),
+            'displayName': p['name'],
+            'imageUrl': p['image_url'],
+          };
+        })
+        .toList();
+    await prefs.setString(_key('la_friends_auto'), jsonEncode(profiles));
+    _friendsFetchedAt = DateTime.now();
+  }
+
   Future<void> _ensureLogin5() async {
     final blobB64 = prefs.getString(_key('la_blob'));
-    final username = prefs.getString(_key('la_username'));
-    if (blobB64 == null || blobB64.isEmpty || username == null || username.isEmpty) {
+    var username = prefs.getString(_key('la_username'));
+    if (blobB64 == null || blobB64.isEmpty) {
       return; // not configured yet
     }
 
@@ -178,7 +247,7 @@ class SpotifySessionService {
       ..bytes(2, [])
       ..msg(100, (sc) {
         sc
-          ..str(1, username)
+          ..str(1, username ?? '')
           ..bytes(2, blob);
       });
 
@@ -196,11 +265,13 @@ class SpotifySessionService {
     ).then((bb) => bb.takeBytes());
 
     String? access;
+    String? okUsername;
     Uint8List? newBlob;
     for (final f in _parse(resBody)) {
       if (f.number == 1) {
         // LoginOk { username=1, access_token=2, stored_credential=3 }
         for (final g in _parse(f.bytes)) {
+          if (g.number == 1) okUsername = utf8.decode(g.bytes);
           if (g.number == 2) access = utf8.decode(g.bytes);
           if (g.number == 3) newBlob = g.bytes;
         }
@@ -209,6 +280,19 @@ class SpotifySessionService {
 
     if (access == null || access.isEmpty) {
       throw const HttpException('login5 did not return an access token');
+    }
+
+    // The canonical username comes back in LoginOk; an empty StoredCredential
+    // username in the request is fine (the blob identifies the account).
+    if (okUsername != null && okUsername.isNotEmpty) {
+      _me = okUsername;
+      unawaited(prefs.setString(_key('la_me'), okUsername));
+      if (username == null || username.isEmpty) {
+        username = okUsername;
+        unawaited(prefs.setString(_key('la_username'), okUsername));
+      }
+    } else {
+      _me = username ?? prefs.getString(_key('la_me'));
     }
 
     _token = access;
@@ -239,13 +323,36 @@ class SpotifySessionService {
       throw const HttpException('users-activity failed');
     }
 
+    // Attach the auto-discovered display names/avatars to the feed entries so
+    // the plugin renders real profiles with zero extra requests.
+    final meta = <String, Map<String, dynamic>>{};
+    final autoRaw = prefs.getString(_key('la_friends_auto'));
+    if (autoRaw != null && autoRaw.isNotEmpty) {
+      try {
+        final list = jsonDecode(autoRaw) as List;
+        for (final e in list) {
+          if (e is Map && e['username'] is String) {
+            meta[e['username'] as String] = {
+              'displayName': e['displayName'],
+              'imageUrl': e['imageUrl'],
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
     final json = jsonDecode(utf8.decode(resBody)) as Map<String, dynamic>;
     final activities = (json['activities'] as List? ?? [])
-        .whereType<Map<String, dynamic>>()
-        .map((entry) {
-          final activity = (entry['activity'] ?? {}) as Map<String, dynamic>;
+        .where((e) => e is Map)
+        .map((e) {
+          final entry = Map<String, dynamic>.from(e as Map);
+          final activity = Map<String, dynamic>.from(
+              (entry['activity'] ?? <String, dynamic>{}) as Map);
+          final username = entry['username'];
           return {
-            'username': entry['username'],
+            'username': username,
+            'displayName': meta[username]?['displayName'],
+            'imageUrl': meta[username]?['imageUrl'],
             'entityUri': activity['entityUri'],
             'isPlaying': activity['isPlaying'] == true,
             'timestampMs': _isoToMs(activity['timestamp'] as String?),
