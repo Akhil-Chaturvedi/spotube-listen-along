@@ -1,4 +1,5 @@
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
@@ -31,19 +32,31 @@ class HomePageBrowseSection extends HookConsumerWidget {
     // fails, so this can never blank the Home tab. Plugins can also push
     // refreshes themselves via Plugin.requestRefresh().
     final lifecycle = useAppLifecycleState();
+    final markSessionInUse = useCallback(() async {
+      try {
+        (await ref.read(metadataPluginProvider.future))
+            ?.spotifySession
+            .markInUse();
+      } catch (_) {}
+    }, const []);
     useEffect(() {
       Future.microtask(() async {
         ref
             .read(metadataPluginBrowseSectionsProvider.notifier)
             .refreshIfStale();
-        try {
-          (await ref.read(metadataPluginProvider.future))
-              ?.spotifySession
-              .markInUse();
-        } catch (_) {}
+        await markSessionInUse();
       });
       return null;
     }, const [lifecycle]);
+    // While Home is mounted and the app is foregrounded, keep the session
+    // lease alive so the friend data stays continuously fresh (well under
+    // the 3-minute lease). The lifecycle check is read live from the
+    // binding, so backgrounded ticks are skipped.
+    useInterval(const Duration(seconds: 60), () {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        markSessionInUse();
+      }
+    });
 
     if (browseSections.isLoading) {
       return SliverToBoxAdapter(
