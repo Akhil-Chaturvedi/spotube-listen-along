@@ -49,7 +49,7 @@ class HomePageBrowseSection extends HookConsumerWidget {
         await markSessionInUse();
       });
       return null;
-    }, const [lifecycle]);
+    }, [lifecycle]);
     // While Home is mounted and the app is foregrounded, keep the session
     // lease alive so the friend data stays continuously fresh. The lifecycle
     // check is read live from the binding, so backgrounded ticks are skipped.
