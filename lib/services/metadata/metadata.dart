@@ -165,9 +165,13 @@ class MetadataPlugin {
     // Native Spotify session upkeep (login5 StoredCredential -> access token
     // for the Friend Activity data path). Bridges the plugin's LocalStorage
     // (la_blob/la_username -> la_token/la_token_exp) with a native protobuf
-    // exchange the Hetu sandbox cannot perform itself.
-    final spotifySession = SpotifySessionService(sharedPreferences, config.slug)
-      ..start();
+    // exchange the Hetu sandbox cannot perform itself. Feed content changes
+    // push the same generic refresh `Plugin.requestRefresh()` uses.
+    final spotifySession = SpotifySessionService(
+      sharedPreferences,
+      config.slug,
+      onFeedChanged: onRequestRefresh,
+    )..start();
 
     return MetadataPlugin._(hetu, spotifySession);
   }

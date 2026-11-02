@@ -146,11 +146,20 @@ class SpotifySessionService {
   String? _me;
   DateTime? _useUntil;
 
+  /// Last feed signature we pushed a refresh for (see [_refreshFeed]).
+  String? _notifiedSig;
+
   /// Set by the host: is a Listen-Along mirror currently active? Mirroring
   /// needs fresh data even when no friend surface is visible.
   bool Function()? mirroringActive;
 
-  SpotifySessionService(this.prefs, this.pluginSlug);
+  /// Optional generic push: called whenever the published feed content
+  /// changed (first publish after setup, or a friend's track changed). The
+  /// host wires this to the same callback `Plugin.requestRefresh()` uses, so
+  /// plugin sections update within one tick instead of the next heartbeat.
+  final void Function()? onFeedChanged;
+
+  SpotifySessionService(this.prefs, this.pluginSlug, {this.onFeedChanged});
 
   String _key(String key) => 'spotube_plugin.$pluginSlug.$key';
 
@@ -425,41 +434,42 @@ class SpotifySessionService {
     await prefs.setString(_key('la_feed'), jsonEncode(activities));
     await prefs.setInt(_key('la_feed_ts'), DateTime.now().millisecondsSinceEpoch);
 
-    // Enrichment: resolve full track objects (name/artist/album/art) for the
-    // feed so the PLUGIN never has to call the rate-limited public API itself
-    // (web tokens 429 easily; the hetu sandbox also cannot catch errors).
-    // Only fires when the feed's track set actually changed - typically a
-    // handful of calls per hour. The signature is recorded only on success so
-    // failures retry on the next tick.
     final signature = activities
         .map((a) => '${a['username']}|${a['entityUri']}')
         .toList()
       ..sort();
     final signatureStr = signature.join(';');
-    if (signatureStr == prefs.getString(_key('la_feed_sig'))) {
-      return;
+
+    // Enrichment: resolve full track objects (name/artist/album/art) for the
+    // feed via pathfinder so the PLUGIN never has to. The public REST
+    // `/tracks?ids=` endpoint rate-limits (429) even for native tokens - the
+    // GraphQL gateway accepts the login5 token directly (verified live).
+    // Only fires when the feed's track set actually changed - typically a
+    // handful of calls per hour. The signature is recorded only on success so
+    // failures retry on the next tick.
+    if (signatureStr != prefs.getString(_key('la_feed_sig'))) {
+      final enriched = await _enrichFeed(activities);
+      if (enriched != null) {
+        await prefs.setString(_key('la_feed'), jsonEncode(enriched));
+        await prefs.setString(_key('la_feed_sig'), signatureStr);
+      }
     }
-    if (await _enrichFeed(activities)) {
-      await prefs.setString(_key('la_feed_sig'), signatureStr);
+
+    // Content-change push (same generic mechanism as Plugin.requestRefresh):
+    // fire AFTER the enrichment attempt so a refetch sees baked tracks.
+    if (signatureStr != _notifiedSig) {
+      _notifiedSig = signatureStr;
+      onFeedChanged?.call();
     }
   }
 
-  /// Resolves full track metadata for [activities] and rewrites `la_feed`
-  /// with a `track` object per entry. Returns false when enrichment was
-  /// skipped/failed (the caller then does NOT record the signature, so the
-  /// next tick retries).
-  Future<bool> _enrichFeed(List<Map<String, dynamic>> activities) async {
-    // The plugin's metadata (sp_dc) credentials hold the web access token
-    // used for api.spotify.com.
-    final credsRaw = prefs.getString(_key('credentials'));
-    String? apiToken;
-    if (credsRaw != null && credsRaw.isNotEmpty) {
-      try {
-        apiToken =
-            (jsonDecode(credsRaw) as Map)['accessToken'] as String?;
-      } catch (_) {}
-    }
-    if (apiToken == null || apiToken.isEmpty) return false;
+  /// Resolves full track metadata for [activities] via the pathfinder v2
+  /// `getTrack` persisted query, returning the feed with a `track` object
+  /// baked into every entry - or null when enrichment failed (the caller then
+  /// does NOT record the signature, so the next tick retries).
+  Future<List<Map<String, dynamic>>?> _enrichFeed(
+      List<Map<String, dynamic>> activities) async {
+    if (_token == null) return null;
 
     final ids = activities
         .map((a) => a['entityUri'] as String?)
@@ -468,43 +478,99 @@ class SpotifySessionService {
         .map((u) => u.substring('spotify:track:'.length))
         .toSet()
         .toList();
-    if (ids.isEmpty) return true;
+    if (ids.isEmpty) return activities;
 
-    final req = await HttpClient().getUrl(
-        Uri.parse('https://api.spotify.com/v1/tracks?ids=${ids.join(",")}'));
-    req.headers.set('Authorization', 'Bearer $apiToken');
-    req.headers.set('Accept', 'application/json');
-    final res = await req.close();
-    if (res.statusCode != 200) {
-      // Leave the feed un-enriched; the plugin renders thin tracks and the
-      // next tick retries.
-      return false;
-    }
-    final resBody = await res.fold<BytesBuilder>(
-      BytesBuilder(),
-      (bb, d) => bb..add(d),
-    ).then((bb) => bb.takeBytes());
-    final json = jsonDecode(utf8.decode(resBody)) as Map<String, dynamic>;
     final tracks = <String, Map<String, dynamic>>{};
-    for (final e in (json['tracks'] as List? ?? [])) {
-      if (e is Map && e['id'] != null) {
-        tracks[e['id'] as String] = _mapRestTrack(Map<String, dynamic>.from(e));
-      }
+    for (final id in ids) {
+      final t = await _pathfinderTrack(id);
+      if (t == null) return null; // transient failure; retry next tick
+      tracks[id] = t;
     }
 
-    final enriched = activities.map((a) {
+    return activities.map((a) {
       final uri = a['entityUri'] as String?;
       if (uri != null && uri.startsWith('spotify:track:')) {
         final t = tracks[uri.substring('spotify:track:'.length)];
         if (t != null) {
-          return {...a, 'track': t};
+          return {...a, 'track': _mapRestTrack(t)};
         }
       }
       return a;
     }).toList();
+  }
 
-    await prefs.setString(_key('la_feed'), jsonEncode(enriched));
-    return true;
+  /// Pathfinder v2 `getTrack` for one track id. Returns a REST-shaped map
+  /// (input shape of [_mapRestTrack]), a minimal tombstone map when Spotify
+  /// no longer knows the track, or null on transport/HTTP failure.
+  static const getTrackHash =
+      '612585ae06ba435ad26369870deaae23b5c8800a256cd8a57e08eddc25a37294';
+
+  Future<Map<String, dynamic>?> _pathfinderTrack(String id) async {
+    final body = utf8.encode(jsonEncode({
+      'variables': {'uri': 'spotify:track:$id'},
+      'operationName': 'getTrack',
+      'extensions': {
+        'persistedQuery': {'version': 1, 'sha256Hash': getTrackHash}
+      }
+    }));
+    final req = await HttpClient().postUrl(
+        Uri.parse('https://api-partner.spotify.com/pathfinder/v2/query'));
+    req.headers.set('Authorization', 'Bearer $_token');
+    req.headers.set('Accept', 'application/json');
+    req.headers.set('Content-Type', 'application/json');
+    req.headers.set('User-Agent', userAgent);
+    req.headers.contentLength = body.length;
+    req.add(body);
+    final res = await req.close();
+    final resBody = await res.fold<BytesBuilder>(
+      BytesBuilder(),
+      (bb, d) => bb..add(d),
+    ).then((bb) => bb.takeBytes());
+    if (res.statusCode != 200) return null;
+
+    final json = jsonDecode(utf8.decode(resBody)) as Map<String, dynamic>;
+    final track = (json['data'] is Map)
+        ? (json['data'] as Map)['trackUnion']
+        : null;
+    if (track is! Map) {
+      // Deleted/regional tracks resolve to null: tombstone them so one bad
+      // entry can't block the whole pass from being recorded.
+      return const {'id': null, 'name': null, 'explicit': false, 'duration_ms': 0};
+    }
+
+    final album = (track['albumOfTrack'] ?? {}) as Map;
+    final date = (album['date'] ?? {}) as Map;
+    final artists = <Map<String, dynamic>>[];
+    for (final key in ['firstArtist', 'otherArtists']) {
+      final page = (track[key] ?? {}) as Map;
+      for (final it in (page['items'] ?? []) as List) {
+        if (it is Map) {
+          final uri = it['uri'] as String? ?? '';
+          artists.add({
+            'id': uri.split(':').last,
+            'name': ((it['profile'] ?? {}) as Map)['name'],
+          });
+        }
+      }
+    }
+
+    return {
+      'id': track['id'] ?? id,
+      'name': track['name'],
+      'explicit': ((track['contentRating'] ?? {}) as Map)['label'] == 'EXPLICIT',
+      'duration_ms': ((track['duration'] ?? {}) as Map)['totalMilliseconds'] ?? 0,
+      'artists': artists,
+      'album': {
+        'id': album['id'],
+        'name': album['name'],
+        'album_type':
+            ((album['type'] ?? 'album') as String).toLowerCase(),
+        'images': ((album['coverArt'] ?? {}) as Map)['sources'] ?? [],
+        'release_date': date['isoString'] ?? '',
+        'release_date_precision':
+            (date['precision'] ?? '').toString().toLowerCase(),
+      },
+    };
   }
 
   /// Public-API track JSON -> the plugin's full-track model shape.
