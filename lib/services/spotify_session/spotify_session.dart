@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -113,7 +114,15 @@ class SpotifySessionService {
       'https://spclient.wg.spotify.com/listening-activity/v1/users-activity';
 
   /// How often the feed is polled and the token freshness checked.
-  static const tickInterval = Duration(seconds: 20);
+  ///
+  /// The official clients are push-first (dealer websocket delivers friend
+  /// updates in real time; heartbeat ~25s) and only fall back to polling the
+  /// listening-activity endpoints on a remote-configured interval
+  /// (`listening-activity:poll_interval_ms`), historically ~30s (the old
+  /// buddy-feed cadence). We match that 30s fallback cadence and add small
+  /// jitter so our requests don't arrive at machine-regular intervals.
+  static const tickInterval = Duration(seconds: 30);
+  static const tickJitter = Duration(milliseconds: 2000);
 
   /// How often the (slow-changing) friend list is refreshed.
   static const friendsInterval = Duration(minutes: 30);
@@ -121,6 +130,7 @@ class SpotifySessionService {
 
   final SharedPreferences prefs;
   final String pluginSlug;
+  final Random _rng = Random();
   Timer? _timer;
   bool _running = false;
   String? _token;
@@ -131,14 +141,27 @@ class SpotifySessionService {
 
   String _key(String key) => 'spotube_plugin.$pluginSlug.$key';
 
-  /// Starts the upkeep clock (idempotent).
+  /// Starts the upkeep clock (idempotent). One-shot timers re-scheduled with
+  /// jitter after every tick (Timer.periodic would fire at machine-regular
+  /// intervals).
   void start() {
     if (_running) return;
     _running = true;
     // First attempt shortly after startup so the Friend Activity section has
     // data as soon as the user opens Browse.
-    Timer(const Duration(seconds: 2), _tick);
-    _timer = Timer.periodic(tickInterval, (_) => _tick());
+    Timer(const Duration(seconds: 2), () {
+      _tick();
+      _scheduleNext();
+    });
+  }
+
+  void _scheduleNext() {
+    if (!_running) return;
+    final jitter = Duration(milliseconds: _rng.nextInt(2 * tickJitter.inMilliseconds) - tickJitter.inMilliseconds);
+    _timer = Timer(tickInterval + jitter, () {
+      _tick();
+      _scheduleNext();
+    });
   }
 
   Future<void> _tick() async {
