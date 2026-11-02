@@ -27,9 +27,20 @@ class MetadataPluginBrowseSectionsNotifier
           );
     } catch (e, stack) {
       // The plugin's sections() may fail for many reasons (buddylist endpoint
-      // down, token expired, network error). Log it but don't crash the entire
-      // Home tab — return an empty page so the user still sees the app.
+      // down, token expired, network error). Log it but never crash or blank
+      // the Home tab: degrade to the previously known items when we have
+      // them, otherwise an empty page.
       AppLogger.reportError(e, stack);
+      final previous = state.asData?.value.items;
+      if (offset == 0 && previous != null && previous.isNotEmpty) {
+        return SpotubePaginationResponseObject(
+          limit: limit,
+          nextOffset: null,
+          total: previous.length,
+          hasMore: false,
+          items: previous,
+        );
+      }
       return SpotubePaginationResponseObject(
         limit: limit,
         nextOffset: null,
