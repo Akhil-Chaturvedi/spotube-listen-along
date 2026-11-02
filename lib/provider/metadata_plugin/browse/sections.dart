@@ -6,6 +6,10 @@ import 'package:spotube/services/logger/logger.dart';
 
 class MetadataPluginBrowseSectionsNotifier
     extends PaginatedAsyncNotifier<SpotubeBrowseSectionObject<Object>> {
+  /// Throttle for [refreshIfStale] so UI visibility triggers can call it
+  /// freely without hammering the plugin.
+  DateTime? _lastRefreshIfStaleAt;
+
   @override
   Future<SpotubePaginationResponseObject<SpotubeBrowseSectionObject<Object>>>
       fetch(
@@ -29,6 +33,33 @@ class MetadataPluginBrowseSectionsNotifier
         hasMore: false,
         items: [],
       );
+    }
+  }
+
+  /// Generic "never show stale sections" entry point. Any UI surface that
+  /// becomes visible (Home tab mounted, app resumed, etc.) may call this;
+  /// it re-fetches the first page only when the current data is older than
+  /// [maxAge], and DEGRADES to the previously displayed items when the
+  /// refresh fails or comes back empty. At most one actual refresh per
+  /// maxAge window regardless of how often it is called.
+  Future<void> refreshIfStale({
+    Duration maxAge = const Duration(seconds: 15),
+  }) async {
+    final data = state.asData;
+    if (data == null) return; // initial load / error state: leave as-is
+    final now = DateTime.now();
+    final last = _lastRefreshIfStaleAt;
+    if (last != null && now.difference(last) < maxAge) return;
+    _lastRefreshIfStaleAt = now;
+    try {
+      final page = await fetch(0, 20);
+      // Degrade gracefully: an empty refresh (plugin error) must never wipe
+      // content the user is looking at.
+      if (page.items.isNotEmpty || data.value.items.isEmpty) {
+        state = AsyncData(page);
+      }
+    } catch (_) {
+      // fetch() already degrades internally; never let a refresh kill the UI.
     }
   }
 

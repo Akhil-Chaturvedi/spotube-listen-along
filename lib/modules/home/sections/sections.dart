@@ -1,4 +1,5 @@
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:spotube/collections/routes.gr.dart';
@@ -20,6 +21,22 @@ class HomePageBrowseSection extends HookConsumerWidget {
     final browseSections = ref.watch(metadataPluginBrowseSectionsProvider);
     final sections = browseSections.asData?.value.items;
     final ThemeData(:colorScheme) = Theme.of(context);
+
+    // Generic "never stale sections" triggers: whenever this section becomes
+    // visible (tab mounted) and whenever the app is resumed, ask the
+    // provider to refresh if the data is older than a few seconds. The
+    // provider degrades to the previously shown content if the refresh
+    // fails, so this can never blank the Home tab. Plugins can also push
+    // refreshes themselves via Plugin.requestRefresh().
+    final lifecycle = useAppLifecycleState();
+    useEffect(() {
+      Future.microtask(
+        () => ref
+            .read(metadataPluginBrowseSectionsProvider.notifier)
+            .refreshIfStale(),
+      );
+      return null;
+    }, const [lifecycle]);
 
     if (browseSections.isLoading) {
       return SliverToBoxAdapter(
