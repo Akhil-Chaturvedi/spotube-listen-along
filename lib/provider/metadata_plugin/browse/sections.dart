@@ -16,8 +16,12 @@ class MetadataPluginBrowseSectionsNotifier
     int offset,
     int limit,
   ) async {
+    final plugin = await metadataPlugin;
+    // Any fetch means the sections are being consumed - extend the Spotify
+    // session's visibility lease (friend feed freshness follows demand).
+    plugin.spotifySession.markInUse();
     try {
-      return await (await metadataPlugin).browse.sections(
+      return await plugin.browse.sections(
             limit: limit,
             offset: offset,
           );

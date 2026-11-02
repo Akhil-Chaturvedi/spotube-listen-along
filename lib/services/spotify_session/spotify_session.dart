@@ -124,6 +124,14 @@ class SpotifySessionService {
   static const tickInterval = Duration(seconds: 30);
   static const tickJitter = Duration(milliseconds: 2000);
 
+  /// Demand model: polling only happens while something is actually
+  /// consuming the data - the Friend Activity surface is visible (a UI
+  /// effect calls [markInUse] on mount / app resume, granting a lease) or
+  /// Listen-Along mirroring is active. When the lease expires and nothing
+  /// mirrors, the loop goes fully dormant (zero requests; the UI simply
+  /// keeps showing the last-known data until the surface is opened again).
+  static const useLease = Duration(minutes: 3);
+
   /// How often the (slow-changing) friend list is refreshed.
   static const friendsInterval = Duration(minutes: 30);
   DateTime _friendsFetchedAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -136,27 +144,52 @@ class SpotifySessionService {
   String? _token;
   int _tokenExpMs = 0;
   String? _me;
+  DateTime? _useUntil;
+
+  /// Set by the host: is a Listen-Along mirror currently active? Mirroring
+  /// needs fresh data even when no friend surface is visible.
+  bool Function()? mirroringActive;
 
   SpotifySessionService(this.prefs, this.pluginSlug);
 
   String _key(String key) => 'spotube_plugin.$pluginSlug.$key';
 
-  /// Starts the upkeep clock (idempotent). One-shot timers re-scheduled with
-  /// jitter after every tick (Timer.periodic would fire at machine-regular
-  /// intervals).
+  bool get _inUse =>
+      (mirroringActive?.call() ?? false) ||
+      (_useUntil != null && DateTime.now().isBefore(_useUntil!));
+
+  /// Marks the data as "being consumed right now". Idempotent; each call
+  /// extends the lease. Opens UI surfaces should call this on mount and on
+  /// app resume.
+  void markInUse({Duration lease = useLease}) {
+    _useUntil = DateTime.now().add(lease);
+    if (!_running) return;
+    if (_timer != null) return; // loop already active
+    // Wake immediately if the feed is missing/stale so an opened surface
+    // shows fresh data within ~half a second.
+    final feedTs = prefs.getInt(_key('la_feed_ts')) ?? 0;
+    final stale = DateTime.now().millisecondsSinceEpoch - feedTs > 15000;
+    if (stale || _token == null) {
+      _timer = Timer(const Duration(milliseconds: 500), () {
+        _tick();
+        _scheduleNext();
+      });
+    }
+  }
+
+  /// Kept for lifecycle symmetry (the host calls it after plugin load); the
+  /// demand model means no polling starts until [markInUse] / mirroring.
   void start() {
-    if (_running) return;
     _running = true;
-    // First attempt shortly after startup so the Friend Activity section has
-    // data as soon as the user opens Browse.
-    Timer(const Duration(seconds: 2), () {
-      _tick();
-      _scheduleNext();
-    });
   }
 
   void _scheduleNext() {
     if (!_running) return;
+    if (!_inUse) {
+      // Nobody is consuming: go dormant. The next markInUse wakes us.
+      _timer = null;
+      return;
+    }
     final jitter = Duration(milliseconds: _rng.nextInt(2 * tickJitter.inMilliseconds) - tickJitter.inMilliseconds);
     _timer = Timer(tickInterval + jitter, () {
       _tick();
@@ -165,6 +198,11 @@ class SpotifySessionService {
   }
 
   Future<void> _tick() async {
+    if (!_inUse) {
+      // Lease expired / nothing mirroring: stay dormant.
+      _timer = null;
+      return;
+    }
     try {
       final needsToken =
           _token == null || DateTime.now().millisecondsSinceEpoch > _tokenExpMs - 10 * 60 * 1000;

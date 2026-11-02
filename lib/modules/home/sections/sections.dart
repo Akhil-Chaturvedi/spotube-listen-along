@@ -8,6 +8,7 @@ import 'package:spotube/components/fallbacks/no_default_metadata_plugin.dart';
 import 'package:spotube/components/horizontal_playbutton_card_view/horizontal_playbutton_card_view.dart';
 import 'package:spotube/extensions/context.dart';
 import 'package:spotube/provider/metadata_plugin/browse/sections.dart';
+import 'package:spotube/provider/metadata_plugin/metadata_plugin_provider.dart';
 import 'package:spotube/provider/metadata_plugin/utils/common.dart';
 import 'package:spotube/services/metadata/errors/exceptions.dart';
 import 'package:very_good_infinite_list/very_good_infinite_list.dart';
@@ -24,17 +25,23 @@ class HomePageBrowseSection extends HookConsumerWidget {
 
     // Generic "never stale sections" triggers: whenever this section becomes
     // visible (tab mounted) and whenever the app is resumed, ask the
-    // provider to refresh if the data is older than a few seconds. The
-    // provider degrades to the previously shown content if the refresh
+    // provider to refresh if the data is older than a few seconds, and mark
+    // the Spotify session as in-use (friend feed polling follows demand).
+    // The provider degrades to the previously shown content if the refresh
     // fails, so this can never blank the Home tab. Plugins can also push
     // refreshes themselves via Plugin.requestRefresh().
     final lifecycle = useAppLifecycleState();
     useEffect(() {
-      Future.microtask(
-        () => ref
+      Future.microtask(() async {
+        ref
             .read(metadataPluginBrowseSectionsProvider.notifier)
-            .refreshIfStale(),
-      );
+            .refreshIfStale();
+        try {
+          (await ref.read(metadataPluginProvider.future))
+              ?.spotifySession
+              .markInUse();
+        } catch (_) {}
+      });
       return null;
     }, const [lifecycle]);
 

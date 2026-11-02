@@ -48,6 +48,11 @@ class MetadataPluginListenAlongEndpoint {
 
   bool get isSupported => _instance != null;
 
+  /// True while the faster mirroring loop is running (the host started a
+  /// Listen-Along mirror). Exposed so the Spotify session service knows to
+  /// keep the feed fresh even when no friend surface is visible.
+  bool get isMirroring => _timer != null;
+
   Future<List<Map<String, dynamic>>> availableFriends() async {
     final instance = _instance;
     if (instance == null) return const [];

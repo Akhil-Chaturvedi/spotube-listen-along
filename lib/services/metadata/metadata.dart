@@ -206,5 +206,8 @@ class MetadataPlugin {
     // - NOT when some UI first renders - so upkeep never depends on a widget
     // happening to be on screen.
     listenAlong.startKeepAlive();
+    // Demand model: keep the Spotify session polling while a Listen-Along
+    // mirror is running, even when no friend surface is visible.
+    spotifySession.mirroringActive = () => listenAlong.isMirroring;
   }
 }
