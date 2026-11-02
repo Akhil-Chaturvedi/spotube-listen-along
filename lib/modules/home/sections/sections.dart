@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
@@ -49,14 +51,17 @@ class HomePageBrowseSection extends HookConsumerWidget {
       return null;
     }, const [lifecycle]);
     // While Home is mounted and the app is foregrounded, keep the session
-    // lease alive so the friend data stays continuously fresh (well under
-    // the 3-minute lease). The lifecycle check is read live from the
-    // binding, so backgrounded ticks are skipped.
-    useInterval(const Duration(seconds: 60), () {
-      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
-        markSessionInUse();
-      }
-    });
+    // lease alive so the friend data stays continuously fresh. The lifecycle
+    // check is read live from the binding, so backgrounded ticks are skipped.
+    useEffect(() {
+      final timer = Timer.periodic(const Duration(seconds: 60), (_) {
+        if (WidgetsBinding.instance.lifecycleState ==
+            AppLifecycleState.resumed) {
+          markSessionInUse();
+        }
+      });
+      return () => timer.cancel();
+    }, const []);
 
     if (browseSections.isLoading) {
       return SliverToBoxAdapter(
