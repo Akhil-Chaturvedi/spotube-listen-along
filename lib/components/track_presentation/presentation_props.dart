@@ -52,6 +52,15 @@ class TrackPresentationOptions {
   final String? shareUrl;
   final Object? error;
 
+  /// When set, the header play button invokes this instead of playing the
+  /// collection's tracks (e.g. a "live" collection whose play button toggles
+  /// Listen-Along mirroring). Per-track play buttons are unaffected.
+  final VoidCallback? onPlayOverride;
+
+  /// Whether the [onPlayOverride] action is currently "active" (the button
+  /// then renders its playing/pause state and pressing it deactivates).
+  final bool isPlayingOverride;
+
   // events
   final FutureOr<bool?> Function()? onHeart; // if null heart button will hidden
 
@@ -69,6 +78,8 @@ class TrackPresentationOptions {
     this.isLiked = false,
     this.onHeart,
     this.error,
+    this.onPlayOverride,
+    this.isPlayingOverride = false,
   }) : assert(collection is SpotubeSimpleAlbumObject ||
             collection is SpotubeSimplePlaylistObject);
 
@@ -93,7 +104,9 @@ class TrackPresentationOptions {
         other.isLiked == isLiked &&
         other.shareUrl == shareUrl &&
         other.onHeart == onHeart &&
-        other.error == error;
+        other.error == error &&
+        other.onPlayOverride == onPlayOverride &&
+        other.isPlayingOverride == isPlayingOverride;
   }
 
   @override
@@ -109,5 +122,7 @@ class TrackPresentationOptions {
       isLiked.hashCode ^
       shareUrl.hashCode ^
       onHeart.hashCode ^
-      error.hashCode;
+      error.hashCode ^
+      onPlayOverride.hashCode ^
+      isPlayingOverride.hashCode;
 }

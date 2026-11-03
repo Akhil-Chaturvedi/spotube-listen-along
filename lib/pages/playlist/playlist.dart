@@ -8,7 +8,9 @@ import 'package:spotube/components/track_presentation/track_presentation.dart';
 import 'package:spotube/components/track_presentation/use_is_user_playlist.dart';
 import 'package:spotube/extensions/context.dart';
 import 'package:spotube/models/metadata/metadata.dart';
+import 'package:spotube/provider/listen_along/listen_along.dart';
 import 'package:spotube/provider/metadata_plugin/library/playlists.dart';
+import 'package:spotube/provider/metadata_plugin/metadata_plugin_provider.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:spotube/provider/metadata_plugin/tracks/playlist.dart';
 import 'package:spotube/provider/metadata_plugin/utils/common.dart';
@@ -50,6 +52,20 @@ class PlaylistPage extends HookConsumerWidget {
         ref.watch(metadataPluginSavedPlaylistsProvider.notifier);
 
     final isUserPlaylist = useIsUserPlaylist(ref, playlist.id);
+
+    // "Live" collections (e.g. a Friend Activity card) route the header play
+    // button to Listen-Along mirroring instead of a one-shot play - the same
+    // behavior as the play icon on the card itself. Per-track play buttons
+    // in the list below still play normally.
+    final listenAlongId = ref.watch(listenAlongControllerProvider);
+    final listenAlongSupported = ref
+            .watch(metadataPluginProvider)
+            .asData
+            ?.value
+            ?.listenAlong
+            .isSupported ??
+        false;
+    final isLiveCollection = playlist.isLive && listenAlongSupported;
 
     return material.RefreshIndicator.adaptive(
       onRefresh: () async {
@@ -106,8 +122,15 @@ class PlaylistPage extends HookConsumerWidget {
                   }
                   return isUserPlaylist;
                 },
-        ),
-      ),
-    );
-  }
-}
+              ),
+              onPlayOverride: isLiveCollection
+                  ? () => ref
+                      .read(listenAlongControllerProvider.notifier)
+                      .toggle(playlist.id)
+                  : null,
+              isPlayingOverride: isLiveCollection && listenAlongId == playlist.id,
+            ),
+          ),
+        );
+      }
+    }

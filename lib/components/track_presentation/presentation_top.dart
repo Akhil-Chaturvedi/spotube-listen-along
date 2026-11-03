@@ -33,6 +33,16 @@ class TrackPresentationTopSection extends HookConsumerWidget {
     final (:isLoading, :isActive, :onPlay, :onShuffle, :onAddToQueue) =
         useActionCallbacks(ref);
 
+    // Optional play override (e.g. a "live" collection whose play button
+    // toggles Listen-Along mirroring instead of a one-shot play). While the
+    // override is active the button stays pressable so it can deactivate.
+    final playOverride = options.onPlayOverride;
+    final overrideActive =
+        playOverride != null && options.isPlayingOverride;
+    final playButtonActive = playOverride != null ? overrideActive : isActive;
+    final playButtonLoading = playOverride != null ? false : isLoading;
+    final onPlayPressed = playOverride ?? onPlay;
+
     final playbackActions = Row(
       spacing: 8 * scale,
       children: [
@@ -71,16 +81,21 @@ class TrackPresentationTopSection extends HookConsumerWidget {
           ),
         Button.primary(
           alignment: Alignment.center,
-          leading: switch ((isActive, isLoading)) {
+          leading: switch ((playButtonActive, playButtonLoading)) {
             (true, false) => const Icon(SpotubeIcons.pause),
             (false, true) => const Center(
                 child: CircularProgressIndicator(onSurface: true, size: 18),
               ),
             _ => const Icon(SpotubeIcons.play),
           },
-          onPressed: onPlay,
-          enabled: !isLoading && !isActive,
-          child: isActive ? Text(context.l10n.pause) : Text(context.l10n.play),
+          onPressed: onPlayPressed,
+          // The override path stays pressable so tapping it again
+          // deactivates (stops mirroring); the normal path keeps its
+          // loading/active gating.
+          enabled: playOverride != null || (!playButtonLoading && !playButtonActive),
+          child: playButtonActive
+              ? Text(context.l10n.pause)
+              : Text(context.l10n.play),
         ),
       ],
     );
