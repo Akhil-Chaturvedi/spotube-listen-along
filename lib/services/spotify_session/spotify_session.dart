@@ -210,12 +210,28 @@ class SpotifySessionService {
     });
   }
 
+  /// Immediate one-shot refresh. Used by the Listen-Along mirror when OUR
+  /// song is about to end and the friend may already have skipped ahead -
+  /// don't wait out the regular interval. Rate-limited by the caller.
+  Future<void> refreshNow() async {
+    if (!_running || !_inUse) return;
+    if (_ticking) return; // a tick is already in flight
+    _timer?.cancel();
+    _timer = null;
+    await _tick();
+    _scheduleNext();
+  }
+
+  bool _ticking = false;
+
   Future<void> _tick() async {
+    if (_ticking) return;
     if (!_inUse) {
       // Lease expired / nothing mirroring: stay dormant.
       _timer = null;
       return;
     }
+    _ticking = true;
     try {
       final needsToken =
           _token == null || DateTime.now().millisecondsSinceEpoch > _tokenExpMs - 10 * 60 * 1000;
@@ -238,6 +254,8 @@ class SpotifySessionService {
     } catch (_) {
       // Upkeep is best-effort; a failed tick leaves the previous feed/token
       // intact and the next tick retries.
+    } finally {
+      _ticking = false;
     }
   }
 

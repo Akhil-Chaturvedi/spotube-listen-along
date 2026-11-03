@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:auto_route/auto_route.dart';
@@ -173,7 +174,7 @@ class MetadataPlugin {
       onFeedChanged: onRequestRefresh,
     )..start();
 
-    return MetadataPlugin._(hetu, spotifySession);
+    return MetadataPlugin._(hetu, spotifySession, createPlayer: createPlayer);
   }
 
   final Hetu hetu;
@@ -192,7 +193,11 @@ class MetadataPlugin {
   late final MetadataPluginCore core;
   late final MetadataPluginListenAlongEndpoint listenAlong;
 
-  MetadataPlugin._(this.hetu, this.spotifySession) {
+  MetadataPlugin._(
+    this.hetu,
+    this.spotifySession, {
+    spotube_plugin.Player Function()? createPlayer,
+  }) {
     auth = MetadataAuthEndpoint(hetu);
 
     audioSource = MetadataPluginAudioSourceEndpoint(hetu);
@@ -204,7 +209,12 @@ class MetadataPlugin {
     track = MetadataPluginTrackEndpoint(hetu);
     user = MetadataPluginUserEndpoint(hetu);
     core = MetadataPluginCore(hetu);
-    listenAlong = MetadataPluginListenAlongEndpoint(hetu);
+    // The mirror POLICY lives host-side (hetu cannot dispatch external
+    // instance methods from async callbacks): the plugin only supplies data.
+    listenAlong = MetadataPluginListenAlongEndpoint(
+      hetu,
+      createPlayer: createPlayer,
+    );
     // Generic plugin maintenance clock (plugins may use tick() for periodic
     // upkeep like refreshing their own auth token). Must start at plugin load
     // - NOT when some UI first renders - so upkeep never depends on a widget
@@ -213,5 +223,9 @@ class MetadataPlugin {
     // Demand model: keep the Spotify session polling while a Listen-Along
     // mirror is running, even when no friend surface is visible.
     spotifySession.mirroringActive = () => listenAlong.isMirroring;
+    // The mirror can demand fresh data immediately (our song is ending and
+    // the friend may have skipped ahead).
+    listenAlong.onDemandDataRefresh =
+        () => unawaited(spotifySession.refreshNow());
   }
 }
