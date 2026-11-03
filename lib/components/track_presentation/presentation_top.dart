@@ -41,7 +41,7 @@ class TrackPresentationTopSection extends HookConsumerWidget {
         playOverride != null && options.isPlayingOverride;
     final playButtonActive = playOverride != null ? overrideActive : isActive;
     final playButtonLoading = playOverride != null ? false : isLoading;
-    final onPlayPressed = playOverride ?? onPlay;
+    final VoidCallback onPlayPressed = playOverride ?? () => onPlay();
 
     final playbackActions = Row(
       spacing: 8 * scale,

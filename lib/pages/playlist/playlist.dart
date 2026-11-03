@@ -122,15 +122,14 @@ class PlaylistPage extends HookConsumerWidget {
                   }
                   return isUserPlaylist;
                 },
-              ),
-              onPlayOverride: isLiveCollection
-                  ? () => ref
-                      .read(listenAlongControllerProvider.notifier)
-                      .toggle(playlist.id)
-                  : null,
-              isPlayingOverride: isLiveCollection && listenAlongId == playlist.id,
-            ),
-          ),
-        );
-      }
-    }
+          onPlayOverride: isLiveCollection
+              ? () => ref
+                  .read(listenAlongControllerProvider.notifier)
+                  .toggle(playlist.id)
+              : null,
+          isPlayingOverride: isLiveCollection && listenAlongId == playlist.id,
+        ),
+      ),
+    );
+  }
+}
