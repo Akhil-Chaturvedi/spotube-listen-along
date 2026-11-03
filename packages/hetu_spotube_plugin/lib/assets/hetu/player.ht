@@ -3,6 +3,16 @@ external class Player {
 
   /// Replace the queue with [tracks] (list of MetadataTrack maps) and optionally
   /// start playing from [initialIndex].
+  ///
+  /// WARNING (hetu 0.4.2): INSTANCE methods on external objects cannot be
+  /// dispatched from separately-compiled plugin modules - the first
+  /// `player.method()` call throws "Undefined identifier [Player]"
+  /// (verified; see misc/tests/repro_player). Until hetu fixes declaration
+  /// resolution across aliased module imports, treat this class as
+  /// HOST-SIDE-ONLY: hosts should drive playback from Dart through the
+  /// Player binding (see the Listen Along mirror policy in Spotube), not
+  /// from plugin bytecode. Static externals (LocalStorage, Plugin) are
+  /// unaffected.
   fun loadTracks(tracks: List, {autoPlay: bool, initialIndex: int}) -> Future
 
   /// Play a single track immediately (replaces the queue).
