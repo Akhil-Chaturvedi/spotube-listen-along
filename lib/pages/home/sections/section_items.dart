@@ -43,17 +43,21 @@ class HomeBrowseSectionItemsPage extends HookConsumerWidget {
         ref.watch(metadataPluginBrowseSectionItemsProvider(sectionId));
     final sectionItemsNotifier =
         ref.watch(metadataPluginBrowseSectionItemsProvider(sectionId).notifier);
-    final items = sectionItems.asData?.value.items ?? [];
+    // `value` (not `asData`): keep showing previous items during a background
+    // reload instead of flashing skeletons (stale-while-revalidate).
+    final items = sectionItems.value?.items ?? [];
     final controller = useScrollController();
 
-    final isLoading = sectionItems.isLoading || sectionItems.isLoadingNextPage;
+    final isLoading =
+        (sectionItems.isLoading && !sectionItems.hasValue) ||
+        sectionItems.isLoadingNextPage;
     final itemCount = items.length;
     final hasMore = sectionItems.asData?.value.hasMore ?? false;
 
     return SafeArea(
       bottom: false,
       child: Skeletonizer(
-        enabled: sectionItems.isLoading,
+        enabled: sectionItems.isLoading && !sectionItems.hasValue,
         child: Scaffold(
           headers: [
             TitleBar(

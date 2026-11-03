@@ -146,8 +146,12 @@ class SpotifySessionService {
   String? _me;
   DateTime? _useUntil;
 
-  /// Last feed signature we pushed a refresh for (see [_refreshFeed]).
+  /// Feed projection we last pushed a refresh for (see [_refreshFeed]).
   String? _notifiedSig;
+
+  /// trackId -> fully mapped track metadata (lifetime of the service).
+  /// Steady-state ticks therefore make zero network requests.
+  final Map<String, Map<String, dynamic>> _trackCache = {};
 
   /// Set by the host: is a Listen-Along mirror currently active? Mirroring
   /// needs fresh data even when no friend surface is visible.
@@ -431,68 +435,57 @@ class SpotifySessionService {
         })
         .toList();
 
-    await prefs.setString(_key('la_feed'), jsonEncode(activities));
+    // Enrich FIRST, publish ONCE: publishing the thin feed and re-writing it
+    // after enrichment made the feed oscillate between enriched and thin
+    // (any fetch landing in between rendered "Unknown track").
+    final feed = await _enrichFeed(activities);
+    await prefs.setString(_key('la_feed'), jsonEncode(feed));
     await prefs.setInt(_key('la_feed_ts'), DateTime.now().millisecondsSinceEpoch);
 
-    final signature = activities
-        .map((a) => '${a['username']}|${a['entityUri']}')
+    // Content-change push (same generic mechanism as Plugin.requestRefresh):
+    // fires when the projected content changed - a friend's track changed, or
+    // tracks gained/lost metadata (e.g. a thin -> enriched transition).
+    final projection = feed
+        .map((a) =>
+            '${a['username']}|${a['entityUri']}|${a['track'] != null ? 1 : 0}')
         .toList()
       ..sort();
-    final signatureStr = signature.join(';');
-
-    // Enrichment: resolve full track objects (name/artist/album/art) for the
-    // feed via pathfinder so the PLUGIN never has to. The public REST
-    // `/tracks?ids=` endpoint rate-limits (429) even for native tokens - the
-    // GraphQL gateway accepts the login5 token directly (verified live).
-    // Only fires when the feed's track set actually changed - typically a
-    // handful of calls per hour. The signature is recorded only on success so
-    // failures retry on the next tick.
-    if (signatureStr != prefs.getString(_key('la_feed_sig'))) {
-      final enriched = await _enrichFeed(activities);
-      if (enriched != null) {
-        await prefs.setString(_key('la_feed'), jsonEncode(enriched));
-        await prefs.setString(_key('la_feed_sig'), signatureStr);
-      }
-    }
-
-    // Content-change push (same generic mechanism as Plugin.requestRefresh):
-    // fire AFTER the enrichment attempt so a refetch sees baked tracks.
-    if (signatureStr != _notifiedSig) {
-      _notifiedSig = signatureStr;
+    final projectionStr = projection.join(';');
+    if (projectionStr != _notifiedSig) {
+      _notifiedSig = projectionStr;
       onFeedChanged?.call();
     }
   }
 
-  /// Resolves full track metadata for [activities] via the pathfinder v2
-  /// `getTrack` persisted query, returning the feed with a `track` object
-  /// baked into every entry - or null when enrichment failed (the caller then
-  /// does NOT record the signature, so the next tick retries).
-  Future<List<Map<String, dynamic>>?> _enrichFeed(
+  /// Bakes full track objects (name/artist/album/art) into [activities] via
+  /// the pathfinder v2 `getTrack` persisted query. The public REST
+  /// `/tracks?ids=` endpoint rate-limits (429) even for native tokens - the
+  /// GraphQL gateway accepts the login5 token directly (verified live).
+  ///
+  /// Results are cached for the service's lifetime, so steady-state ticks
+  /// make ZERO requests; only ids never seen before are fetched (deleted or
+  /// region-locked tracks are tombstoned in the cache and never retried).
+  /// Entries whose fetch fails are left thin - the next tick retries them.
+  Future<List<Map<String, dynamic>>> _enrichFeed(
       List<Map<String, dynamic>> activities) async {
-    if (_token == null) return null;
+    if (_token == null) return activities;
 
-    final ids = activities
-        .map((a) => a['entityUri'] as String?)
-        .whereType<String>()
-        .where((u) => u.startsWith('spotify:track:'))
-        .map((u) => u.substring('spotify:track:'.length))
-        .toSet()
-        .toList();
-    if (ids.isEmpty) return activities;
-
-    final tracks = <String, Map<String, dynamic>>{};
-    for (final id in ids) {
+    for (final a in activities) {
+      final uri = a['entityUri'] as String?;
+      if (uri == null || !uri.startsWith('spotify:track:')) continue;
+      final id = uri.substring('spotify:track:'.length);
+      if (_trackCache.containsKey(id)) continue;
       final t = await _pathfinderTrack(id);
-      if (t == null) return null; // transient failure; retry next tick
-      tracks[id] = t;
+      if (t == null) continue; // transient failure; retry next tick
+      _trackCache[id] = _mapRestTrack(t);
     }
 
     return activities.map((a) {
       final uri = a['entityUri'] as String?;
       if (uri != null && uri.startsWith('spotify:track:')) {
-        final t = tracks[uri.substring('spotify:track:'.length)];
+        final t = _trackCache[uri.substring('spotify:track:'.length)];
         if (t != null) {
-          return {...a, 'track': _mapRestTrack(t)};
+          return {...a, 'track': t};
         }
       }
       return a;

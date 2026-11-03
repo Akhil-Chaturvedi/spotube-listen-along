@@ -23,7 +23,10 @@ class HomePageBrowseSection extends HookConsumerWidget {
   @override
   Widget build(BuildContext context, ref) {
     final browseSections = ref.watch(metadataPluginBrowseSectionsProvider);
-    final sections = browseSections.asData?.value.items;
+    // `value` (not `asData`): during a background reload/refresh Riverpod
+    // reports isLoading while STILL holding the previous data - render that
+    // instead of flashing a loading screen (stale-while-revalidate).
+    final sections = browseSections.value?.items;
     final ThemeData(:colorScheme) = Theme.of(context);
 
     // Generic "never stale sections" triggers: whenever this section becomes
@@ -63,7 +66,9 @@ class HomePageBrowseSection extends HookConsumerWidget {
       return () => timer.cancel();
     }, const []);
 
-    if (browseSections.isLoading) {
+    // Only show the full loading illustration on the FIRST load; background
+    // refreshes keep the previous sections on screen.
+    if (browseSections.isLoading && !browseSections.hasValue) {
       return SliverToBoxAdapter(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -98,7 +103,9 @@ class HomePageBrowseSection extends HookConsumerWidget {
       );
     }
 
-    if (browseSections.hasError) {
+    // Same for errors: only take over the screen when there is nothing to
+    // degrade to (the provider also keeps last-known items on failures).
+    if (browseSections.hasError && !browseSections.hasValue) {
       return SliverFillRemaining(
         child: Center(
           child: ErrorBox(
