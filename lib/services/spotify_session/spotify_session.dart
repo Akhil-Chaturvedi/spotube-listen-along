@@ -189,6 +189,9 @@ class SpotifySessionService {
     final feedTs = prefs.getInt(_key('la_feed_ts')) ?? 0;
     final stale = DateTime.now().millisecondsSinceEpoch - feedTs > 15000;
     if (stale || _token == null) {
+      unawaited(MirrorTelemetry.log('FriendFeed',
+          'wake: surface opened, feed stale for '
+          '${(DateTime.now().millisecondsSinceEpoch - feedTs) ~/ 1000}s'));
       _timer = Timer(const Duration(milliseconds: 500), () {
         _tick();
         _scheduleNext();
@@ -202,13 +205,23 @@ class SpotifySessionService {
     _running = true;
   }
 
+  /// TEMP (remove with mirror_telemetry.dart): logs the active->dormant
+  /// transition once, so gaps in the feed timeline are explainable.
+  bool _dormantLogged = false;
+
   void _scheduleNext() {
     if (!_running) return;
     if (!_inUse) {
       // Nobody is consuming: go dormant. The next markInUse wakes us.
       _timer = null;
+      if (!_dormantLogged) {
+        _dormantLogged = true;
+        unawaited(MirrorTelemetry.log(
+            'FriendFeed', 'dormant: no consumer, polling stopped'));
+      }
       return;
     }
+    _dormantLogged = false;
     final jitter = Duration(milliseconds: _rng.nextInt(2 * tickJitter.inMilliseconds) - tickJitter.inMilliseconds);
     _timer = Timer(tickInterval + jitter, () {
       _tick();
