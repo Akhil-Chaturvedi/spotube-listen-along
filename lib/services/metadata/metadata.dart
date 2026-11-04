@@ -174,7 +174,12 @@ class MetadataPlugin {
       onFeedChanged: onRequestRefresh,
     )..start();
 
-    return MetadataPlugin._(hetu, spotifySession, createPlayer: createPlayer);
+    return MetadataPlugin._(
+      hetu,
+      spotifySession,
+      createPlayer: createPlayer,
+      onRequestRefresh: onRequestRefresh,
+    );
   }
 
   final Hetu hetu;
@@ -197,6 +202,7 @@ class MetadataPlugin {
     this.hetu,
     this.spotifySession, {
     spotube_plugin.Player Function()? createPlayer,
+    void Function()? onRequestRefresh,
   }) {
     auth = MetadataAuthEndpoint(hetu);
 
@@ -227,5 +233,13 @@ class MetadataPlugin {
     // the friend may have skipped ahead).
     listenAlong.onDemandDataRefresh =
         () => unawaited(spotifySession.refreshNow());
+    // Feed content changed -> refresh plugin sections AND run the mirror
+    // policy immediately (don't wait out the next poll tick). Log analysis
+    // showed friend-change -> our-speaker latency was tick-bound; this
+    // shaves up to pollInterval off it.
+    spotifySession.onFeedChanged = () {
+      onRequestRefresh?.call();
+      listenAlong.pokeForFeedChange();
+    };
   }
 }

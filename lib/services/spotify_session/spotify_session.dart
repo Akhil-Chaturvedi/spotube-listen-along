@@ -167,7 +167,9 @@ class SpotifySessionService {
   /// changed (first publish after setup, or a friend's track changed). The
   /// host wires this to the same callback `Plugin.requestRefresh()` uses, so
   /// plugin sections update within one tick instead of the next heartbeat.
-  final void Function()? onFeedChanged;
+  /// Mutable: the host re-wires it once the Listen-Along endpoint exists so
+  /// a content change can also poke the mirror policy immediately.
+  void Function()? onFeedChanged;
 
   SpotifySessionService(this.prefs, this.pluginSlug, {this.onFeedChanged});
 
@@ -190,8 +192,8 @@ class SpotifySessionService {
     final stale = DateTime.now().millisecondsSinceEpoch - feedTs > 15000;
     if (stale || _token == null) {
       unawaited(MirrorTelemetry.log('FriendFeed',
-          'wake: surface opened, feed stale for '
-          '${(DateTime.now().millisecondsSinceEpoch - feedTs) ~/ 1000}s'));
+          'wake: surface opened, feed '
+          '${feedTs == 0 ? 'never fetched' : 'stale for ${(DateTime.now().millisecondsSinceEpoch - feedTs) ~/ 1000}s'}'));
       _timer = Timer(const Duration(milliseconds: 500), () {
         _tick();
         _scheduleNext();
@@ -222,6 +224,11 @@ class SpotifySessionService {
       return;
     }
     _dormantLogged = false;
+    // LOG-FOUND BUG FIX (2026-11-04): this used to only ASSIGN _timer. When a
+    // refreshNow's await-window let a concurrent markInUse schedule its 500ms
+    // wake timer, BOTH timers survived and the feed was fetched twice per
+    // cycle forever after (visible as back-to-back fetch pairs in the logs).
+    _timer?.cancel();
     final jitter = Duration(milliseconds: _rng.nextInt(2 * tickJitter.inMilliseconds) - tickJitter.inMilliseconds);
     _timer = Timer(tickInterval + jitter, () {
       _tick();

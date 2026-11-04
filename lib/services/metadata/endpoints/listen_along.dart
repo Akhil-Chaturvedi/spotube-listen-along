@@ -70,6 +70,16 @@ class MetadataPluginListenAlongEndpoint {
   /// immediate refresh. Rate-limited by the caller's own demand model.
   void Function()? onDemandDataRefresh;
 
+  /// TEMP-adjacent improvement from log analysis (2026-11-04): the feed
+  /// service pushes a content-change callback the moment a fetch brings a
+  /// track/state change. Running the policy immediately instead of waiting
+  /// out the next [pollInterval] tick shaves up to 10s off the
+  /// friend-changed-song -> our-speakers latency.
+  void pokeForFeedChange() {
+    if (_timer == null) return; // not mirroring
+    unawaited(_policyTick());
+  }
+
   // ---- mirror state (host-owned policy) ----
   String? _startedWith;
   String? _targetUserId;
