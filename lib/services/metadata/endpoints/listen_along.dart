@@ -253,7 +253,22 @@ class MetadataPluginListenAlongEndpoint {
     }
   }
 
+  /// TEMP+FIX: poke() and the periodic timer can land together; two
+  /// concurrent ticks both read pre-update state and double-load the same
+  /// track (log 2026-11-04 19:26:27: two PLAY/loadTracks 25ms apart).
+  bool _policyBusy = false;
+
   Future<void> _policyTick() async {
+    if (_policyBusy) return;
+    _policyBusy = true;
+    try {
+      await _policyTickInner();
+    } finally {
+      _policyBusy = false;
+    }
+  }
+
+  Future<void> _policyTickInner() async {
     final target = _targetUserId;
     if (target == null) return;
     final player = _player;
@@ -394,24 +409,37 @@ class MetadataPluginListenAlongEndpoint {
         remaining <= _earlyFetchLeadMs + 2000) {
       // Policy 4: our song ENDED but the friend is still on the same track -
       // they replayed/looped it. Seek back and keep mirroring.
-      // TEMP: entryTsChanged=true means the friend's activity timestamp moved
-      // since we loaded the track (genuine replay); false means our lead
-      // simply fired while the friend was still on the same playthrough.
+      // LOG-FOUND POLICY REFINEMENT (log 2026-11-04 19:25:48): seek only when
+      // the friend's activity timestamp MOVED since our load - a genuine
+      // replay/seek emits an activity event. An unchanged timestamp proved to
+      // be a stale/paused friend; restarting then was wrong ("stupid song"
+      // got restarted from 0 and was cut off 10s later by the real next
+      // track). With healthy pings (~30s cadence) tsChanged is always true by
+      // song end, so this only blocks the stale case.
       final entryTs = entry["timestamp"] is num
           ? (entry["timestamp"] as num).toInt()
           : null;
-      await _t('REPLAY seek0 ourRemainingMs=$remaining '
-          'friendRemainingMs=$friendRemainingMs friendAgeMs=$friendAgeMs '
-          'entryTsNow=$entryTs entryTsAtLoad=$_loadEntryTsMs '
-          'entryTsChanged=${entryTs != null && _loadEntryTsMs != null && entryTs != _loadEntryTsMs} '
-          'posMs=${state["positionMs"]} ourTrackId=$ourTrackId');
-      try {
-        _markSelf('seek');
-        _markSelf('play');
-        await player.seek(0);
-        await player.play();
-      } catch (e) {
-        await _t('replay seek/play FAILED: $e');
+      final tsChanged = entryTs != null &&
+          _loadEntryTsMs != null &&
+          entryTs != _loadEntryTsMs;
+      if (tsChanged) {
+        await _t('REPLAY seek0 ourRemainingMs=$remaining '
+            'friendRemainingMs=$friendRemainingMs friendAgeMs=$friendAgeMs '
+            'entryTsNow=$entryTs entryTsAtLoad=$_loadEntryTsMs '
+            'entryTsChanged=true posMs=${state["positionMs"]} ourTrackId=$ourTrackId');
+        try {
+          _markSelf('seek');
+          _markSelf('play');
+          await player.seek(0);
+          await player.play();
+        } catch (e) {
+          await _t('replay seek/play FAILED: $e');
+        }
+      } else {
+        await _t('REPLAY-SKIPPED ourRemainingMs=$remaining '
+            'friendRemainingMs=$friendRemainingMs friendAgeMs=$friendAgeMs '
+            'entryTs unchanged since load (stale/paused friend?) -> waiting '
+            '(their next track change or idle will decide)');
       }
     } else {
       await _t('no-change playing=$playing positionMs=${state["positionMs"]} '
