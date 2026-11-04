@@ -6,6 +6,8 @@ import 'dart:typed_data';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:spotube/services/metadata/endpoints/mirror_telemetry.dart';
+
 /// Tiny protobuf writer (field-scoped), ported from the verified login5
 /// probes (misc/tests/ap_login_test.dart).
 class _Pb {
@@ -149,6 +151,10 @@ class SpotifySessionService {
   /// Feed projection we last pushed a refresh for (see [_refreshFeed]).
   String? _notifiedSig;
 
+  /// TEMP (remove with mirror_telemetry.dart): previous per-friend snapshot
+  /// `{entityUri, isPlaying, timestampMs}` for fetch-diff logging.
+  final Map<String, Map<String, dynamic>> _prevFeed = {};
+
   /// trackId -> fully mapped track metadata (lifetime of the service).
   /// Steady-state ticks therefore make zero network requests.
   final Map<String, Map<String, dynamic>> _trackCache = {};
@@ -214,8 +220,17 @@ class SpotifySessionService {
   /// song is about to end and the friend may already have skipped ahead -
   /// don't wait out the regular interval. Rate-limited by the caller.
   Future<void> refreshNow() async {
-    if (!_running || !_inUse) return;
-    if (_ticking) return; // a tick is already in flight
+    if (!_running || !_inUse) {
+      await MirrorTelemetry.log(
+          'FriendFeed', 'refreshNow SKIPPED (running=$_running inUse=$_inUse)');
+      return;
+    }
+    if (_ticking) {
+      await MirrorTelemetry.log(
+          'FriendFeed', 'refreshNow SKIPPED (tick already in flight)');
+      return;
+    }
+    await MirrorTelemetry.log('FriendFeed', 'refreshNow: demand tick');
     _timer?.cancel();
     _timer = null;
     await _tick();
@@ -251,9 +266,10 @@ class SpotifySessionService {
       final friends = _allFriendUsernames();
       if (friends.isEmpty) return;
       await _refreshFeed(friends);
-    } catch (_) {
+    } catch (e) {
       // Upkeep is best-effort; a failed tick leaves the previous feed/token
       // intact and the next tick retries.
+      await MirrorTelemetry.log('FriendFeed', 'tick error: $e');
     } finally {
       _ticking = false;
     }
@@ -395,9 +411,13 @@ class SpotifySessionService {
     if (newBlob != null && newBlob.isNotEmpty) {
       await prefs.setString(_key('la_blob'), base64Encode(newBlob));
     }
+    await MirrorTelemetry.log('FriendFeed',
+        'login5 token refreshed (me=$_me, blobRotated=${newBlob != null})');
   }
 
   Future<void> _refreshFeed(List<String> friends) async {
+    // TEMP: request latency + per-friend diffs (remove with telemetry).
+    final t0 = DateTime.now();
     final req = await HttpClient().postUrl(Uri.parse(usersActivityUrl));
     req.headers.set('Authorization', 'Bearer $_token');
     req.headers.set('Accept', 'application/json');
@@ -412,6 +432,9 @@ class SpotifySessionService {
       (bb, d) => bb..add(d),
     ).then((bb) => bb.takeBytes());
     if (res.statusCode != 200) {
+      await MirrorTelemetry.log('FriendFeed',
+          'fetch FAILED status=${res.statusCode} '
+          'after ${DateTime.now().difference(t0).inMilliseconds}ms');
       throw const HttpException('users-activity failed');
     }
 
@@ -453,6 +476,11 @@ class SpotifySessionService {
         })
         .toList();
 
+    // TEMP: diff against the previous snapshot - one line per actual change,
+    // so the Logs page shows exactly WHAT each fetch brought (track changes,
+    // play-state flips, same-track timestamp moves = replay/seek evidence).
+    final diffs = _diffFeed(activities);
+
     // Enrich FIRST, publish ONCE: publishing the thin feed and re-writing it
     // after enrichment made the feed oscillate between enriched and thin
     // (any fetch landing in between rendered "Unknown track").
@@ -469,10 +497,61 @@ class SpotifySessionService {
         .toList()
       ..sort();
     final projectionStr = projection.join(';');
-    if (projectionStr != _notifiedSig) {
+    final changed = projectionStr != _notifiedSig;
+    if (changed) {
       _notifiedSig = projectionStr;
       onFeedChanged?.call();
     }
+    // TEMP telemetry: one line per poll summarizing what the UI and the
+    // mirror will decide on (see mirror_telemetry.dart).
+    final baked = feed.where((a) => a['track'] != null).length;
+    await MirrorTelemetry.log('FriendFeed',
+        'feed fetched in ${DateTime.now().difference(t0).inMilliseconds}ms '
+        'entries=${feed.length} baked=$baked contentChanged=$changed'
+        '${diffs.isEmpty ? '' : ' | ${diffs.join(' | ')}'}');
+  }
+
+  /// TEMP (remove with mirror_telemetry.dart): builds human-readable diff
+  /// lines between the previous and current feed, updating [_prevFeed].
+  List<String> _diffFeed(List<Map<String, dynamic>> activities) {
+    String shortUri(Object? s) =>
+        s == null ? 'none' : s.toString().split(':').last;
+    final snap = <String, Map<String, dynamic>>{};
+    final out = <String>[];
+    for (final a in activities) {
+      final u = a['username']?.toString() ?? '?';
+      final uri = a['entityUri']?.toString();
+      final playing = a['isPlaying'] == true;
+      final ts = a['timestampMs'];
+      snap[u] = {'entityUri': uri, 'isPlaying': playing, 'timestampMs': ts};
+      final p = _prevFeed[u];
+      if (p == null) {
+        out.add('$u appeared track=${shortUri(uri)} playing=$playing');
+        continue;
+      }
+      if (p['entityUri'] != uri) {
+        out.add('$u track ${shortUri(p['entityUri'])}->${shortUri(uri)} '
+            'playing=$playing');
+      } else if (p['isPlaying'] != playing) {
+        out.add('$u playing ${p['isPlaying']}->$playing (same track)');
+      } else if (ts is int &&
+          p['timestampMs'] is int &&
+          (p['timestampMs'] as int) != 0 &&
+          ts != p['timestampMs']) {
+        // Same track, same state, moved timestamp: replay/loop or seek
+        // evidence - the delta shows which (a replay restarts near the
+        // track's beginning, a ping is ~30s).
+        out.add('$u same-track tsDelta=${ts - (p['timestampMs'] as int)}ms '
+            '(replay/seek?) playing=$playing');
+      }
+    }
+    for (final u in _prevFeed.keys) {
+      if (!snap.containsKey(u)) out.add('$u disappeared');
+    }
+    _prevFeed
+      ..clear()
+      ..addAll(snap);
+    return out;
   }
 
   /// Bakes full track objects (name/artist/album/art) into [activities] via
@@ -488,14 +567,24 @@ class SpotifySessionService {
       List<Map<String, dynamic>> activities) async {
     if (_token == null) return activities;
 
+    var fetched = 0;
+    var missed = 0;
     for (final a in activities) {
       final uri = a['entityUri'] as String?;
       if (uri == null || !uri.startsWith('spotify:track:')) continue;
       final id = uri.substring('spotify:track:'.length);
       if (_trackCache.containsKey(id)) continue;
+      fetched++;
       final t = await _pathfinderTrack(id);
-      if (t == null) continue; // transient failure; retry next tick
+      if (t == null) {
+        missed++; // transient failure; retry next tick
+        continue;
+      }
       _trackCache[id] = _mapRestTrack(t);
+    }
+    if (fetched > 0) {
+      await MirrorTelemetry.log('FriendFeed',
+          'enrich fetched=$fetched missed=$missed cacheSize=${_trackCache.length}');
     }
 
     return activities.map((a) {
