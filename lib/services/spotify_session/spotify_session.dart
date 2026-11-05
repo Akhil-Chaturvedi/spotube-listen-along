@@ -155,6 +155,9 @@ class SpotifySessionService {
   /// `{entityUri, isPlaying, timestampMs}` for fetch-diff logging.
   final Map<String, Map<String, dynamic>> _prevFeed = {};
 
+  /// TEMP: rate-limit for the missing-blob warning (once per hour).
+  int _lastNoBlobLogMs = 0;
+
   /// trackId -> fully mapped track metadata (lifetime of the service).
   /// Steady-state ticks therefore make zero network requests.
   final Map<String, Map<String, dynamic>> _trackCache = {};
@@ -362,6 +365,17 @@ class SpotifySessionService {
     final blobB64 = prefs.getString(_key('la_blob'));
     var username = prefs.getString(_key('la_username'));
     if (blobB64 == null || blobB64.isEmpty) {
+      // LOG-FOUND SILENCE (2026-11-05): a plugin reinstall can leave the
+      // stored blob missing while everything else looks "running" - the
+      // session then no-ops forever with zero log output, which looked
+      // like a mystery outage. Say it loudly (rate-limited to once/hour).
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - _lastNoBlobLogMs > 3600 * 1000) {
+        _lastNoBlobLogMs = now;
+        unawaited(MirrorTelemetry.log('FriendFeed',
+            'la_blob MISSING - open the plugin\'s setup and paste the '
+            'credentials blob; the friend feed cannot start without it'));
+      }
       return; // not configured yet
     }
 
