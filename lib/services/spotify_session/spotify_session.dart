@@ -334,7 +334,7 @@ class SpotifySessionService {
     req.headers.set('Authorization', 'Bearer $_token');
     req.headers.set('Accept', 'application/json');
     req.headers.set('User-Agent', userAgent);
-    final res = await req.close();
+    final res = await req.close().timeout(const Duration(seconds: 12));
     final resBody = await res.fold<BytesBuilder>(
       BytesBuilder(),
       (bb, d) => bb..add(d),
@@ -400,7 +400,9 @@ class SpotifySessionService {
     final body = l5.take();
     req.headers.contentLength = body.length;
     req.add(body);
-    final res = await req.close();
+    // 12s cap: a hung login5 must not stall the whole tick loop (log
+    // 2026-11-05: fetches blocked for up to 70s on flaky mobile networks).
+    final res = await req.close().timeout(const Duration(seconds: 12));
     final resBody = await res.fold<BytesBuilder>(
       BytesBuilder(),
       (bb, d) => bb..add(d),
@@ -460,7 +462,8 @@ class SpotifySessionService {
     final body = utf8.encode(jsonEncode({'usernames': friends}));
     req.headers.contentLength = body.length;
     req.add(body);
-    final res = await req.close();
+    // 12s cap (hung fetches stalled ticks; see _ensureLogin5 note).
+    final res = await req.close().timeout(const Duration(seconds: 12));
     final resBody = await res.fold<BytesBuilder>(
       BytesBuilder(),
       (bb, d) => bb..add(d),
@@ -655,7 +658,7 @@ class SpotifySessionService {
     req.headers.set('User-Agent', userAgent);
     req.headers.contentLength = body.length;
     req.add(body);
-    final res = await req.close();
+    final res = await req.close().timeout(const Duration(seconds: 12));
     final resBody = await res.fold<BytesBuilder>(
       BytesBuilder(),
       (bb, d) => bb..add(d),

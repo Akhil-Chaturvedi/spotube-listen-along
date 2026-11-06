@@ -70,6 +70,16 @@ class MetadataPluginListenAlongEndpoint {
   /// immediate refresh. Rate-limited by the caller's own demand model.
   void Function()? onDemandDataRefresh;
 
+  /// LOG-FOUND FIX (2026-11-05 08:35): starting a mirror against a STALE feed
+  /// (entry idle/absent while the friend is actually active) instantly
+  /// auto-stopped - the user had to tap play nine times before a fresh fetch
+  /// landed. Now the first idle/absent verdict within [startupGrace] of
+  /// start() demands one immediate data refresh and waits for it instead of
+  /// stopping.
+  DateTime? _startedAt;
+  bool _startupRefreshAsked = false;
+  static const startupGrace = Duration(seconds: 20);
+
   /// TEMP-adjacent improvement from log analysis (2026-11-04): the feed
   /// service pushes a content-change callback the moment a fetch brings a
   /// track/state change. Running the policy immediately instead of waiting
@@ -193,6 +203,8 @@ class MetadataPluginListenAlongEndpoint {
     _loadedAt = null;
     _lastObservedOurTrackId = null;
     _selfActions.clear();
+    _startedAt = DateTime.now();
+    _startupRefreshAsked = false;
     if (_player == null && createPlayer != null) {
       _player = createPlayer!();
     }
@@ -224,6 +236,8 @@ class MetadataPluginListenAlongEndpoint {
     _targetUserId = null;
     _lastTrackId = null;
     _friendIdleSince = null;
+    _startedAt = null;
+    _startupRefreshAsked = false;
     final instance = _instance;
     if (instance == null) return;
     try {
@@ -241,6 +255,26 @@ class MetadataPluginListenAlongEndpoint {
 
     unawaited(_policyTick());
     onActiveIdChanged?.call(_startedWith);
+  }
+
+  /// Returns true (and demands one immediate data refresh) when the mirror
+  /// JUST started and the feed verdict may be stale; the caller should skip
+  /// its stop/no-op decision for this tick and let the refreshed data decide
+  /// on the next tick(s). False once the grace window has passed.
+  Future<bool> _startupGrace(String reason) async {
+    final startedAt = _startedAt;
+    if (startedAt == null) return false;
+    if (DateTime.now().difference(startedAt) >= startupGrace) return false;
+    if (_startupRefreshAsked) {
+      // Already asked: keep waiting quietly until the window closes.
+      await _t('startup grace: still waiting after "$reason" verdict');
+      return true;
+    }
+    _startupRefreshAsked = true;
+    await _t('startup grace: "$reason" on possibly-stale data '
+        '-> demanding refresh, waiting up to ${startupGrace.inSeconds}s');
+    onDemandDataRefresh?.call();
+    return true;
   }
 
   Future<Map<String, dynamic>?> _playbackState() async {
@@ -274,7 +308,13 @@ class MetadataPluginListenAlongEndpoint {
     final player = _player;
 
     final entry = await _currentEntry(target);
-    if (entry == null) return;
+    if (entry == null) {
+      // Startup grace: an absent entry right after start may just mean the
+      // feed is stale/empty - demand one refresh instead of silently doing
+      // nothing (the UI keeps showing the mirror as active otherwise).
+      await _startupGrace('no entry for target');
+      return;
+    }
 
     final active = entry["active"] == true;
     final now = DateTime.now();
@@ -285,6 +325,9 @@ class MetadataPluginListenAlongEndpoint {
     // Policy 5: friend idle -> let the current song finish, then pause and
     // stop. After 5 idle minutes stop regardless (no zombie mirrors).
     if (!active) {
+      // Startup grace first: a stale feed can wrongly report the friend idle
+      // right after start (log 2026-11-05 08:35: nine start->stop loops).
+      if (await _startupGrace('friend idle')) return;
       _friendIdleSince ??= now;
       final idleMin =
           now.difference(_friendIdleSince!).inMilliseconds / 60000.0;
