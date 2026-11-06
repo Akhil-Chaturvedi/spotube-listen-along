@@ -158,6 +158,14 @@ class SpotifySessionService {
   /// TEMP: rate-limit for the missing-blob warning (once per hour).
   int _lastNoBlobLogMs = 0;
 
+  /// Consecutive login5 attempts that got a response but NO token (i.e.
+  /// Spotify rejecting the StoredCredential - NOT network failures, which
+  /// throw before this counter). Three strikes -> `la_status=auth_failed`,
+  /// which the plugin renders as the setup card again so the user can paste
+  /// a fresh blob instead of a dead-end "waiting" card.
+  int _login5AuthFails = 0;
+  static const _authFailThreshold = 3;
+
   /// trackId -> fully mapped track metadata (lifetime of the service).
   /// Steady-state ticks therefore make zero network requests.
   final Map<String, Map<String, dynamic>> _trackCache = {};
@@ -423,8 +431,17 @@ class SpotifySessionService {
     }
 
     if (access == null || access.isEmpty) {
+      _login5AuthFails++;
+      if (_login5AuthFails >= _authFailThreshold) {
+        await prefs.setString(_key('la_status'), 'auth_failed');
+        await MirrorTelemetry.log('FriendFeed',
+            'blob rejected ${_login5AuthFails}x (login5 returned no token) '
+            '-> la_status=auth_failed; the UI now shows the setup card');
+      }
       throw const HttpException('login5 did not return an access token');
     }
+    _login5AuthFails = 0;
+    await prefs.setString(_key('la_status'), 'ok');
 
     // The canonical username comes back in LoginOk; an empty StoredCredential
     // username in the request is fine (the blob identifies the account).
