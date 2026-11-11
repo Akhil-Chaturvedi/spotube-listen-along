@@ -42,8 +42,16 @@ class SpotifyPresencePublisher {
     required this.pluginSlug,
     required this.tokenProvider,
     this.createPlayer,
-    this.pollInterval = const Duration(seconds: 3),
-    this.keepaliveInterval = const Duration(seconds: 20),
+    // Official clients are event-driven (they ARE the player); 1s polling is
+    // the closest cheap approximation. Network only fires on real changes.
+    this.pollInterval = const Duration(seconds: 1),
+    // Official/librespot clients send NO periodic keepalive PUT (state goes
+    // out on transitions only; the server extrapolates position and the
+    // dealer WS keeps the cluster entry alive). Our single deliberate
+    // deviation: one reconciliation PUT per minute while playing, so a PUT
+    // lost on a flaky mobile network self-heals within 60s instead of
+    // persisting until the next track transition.
+    this.keepaliveInterval = const Duration(seconds: 60),
   });
 
   final SharedPreferences prefs;
@@ -56,6 +64,16 @@ class SpotifyPresencePublisher {
   Timer? _timer;
   Timer? _heartbeat;
   spotube_plugin.Player? _player;
+
+  // Dealer keepalive state. Values mirror librespot-java 1.6.5 exactly
+  // (decompiled: DealerClient$ConnectionHolder): ping IMMEDIATELY on open,
+  // then every 30s; every ping must be answered by {"type":"pong"} within
+  // 3s or the connection is torn down and reconnected; reconnect attempts
+  // are spaced 10s apart.
+  static const _pingInterval = Duration(seconds: 30);
+  static const _pongWatchdog = Duration(seconds: 3);
+  DateTime _lastPongAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int _pingGeneration = 0;
   WebSocket? _ws;
   String _connectionId = '';
   DateTime _lastConnectAttempt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -250,26 +268,51 @@ class SpotifyPresencePublisher {
           _heartbeat = null;
         },
       );
-      _heartbeat = Timer.periodic(const Duration(seconds: 25), (_) {
-        final w = _ws;
-        if (w != null && w.readyState == WebSocket.open) {
-          w.add(jsonEncode({'type': 'ping'}));
-        }
-      });
+      _heartbeat = Timer.periodic(_pingInterval, (_) => _sendPing());
+      _sendPing(); // librespot pings immediately on open, not after 30s
     } catch (e) {
       _log('dealer connect failed: $e');
       _ws = null;
     }
   }
 
+  /// Sends {"type":"ping"} and arms the 3s pong watchdog (librespot parity:
+  /// "Did not receive ping in 3 seconds. Reconnecting...").
+  void _sendPing() {
+    final w = _ws;
+    if (w == null || w.readyState != WebSocket.open) return;
+    final generation = ++_pingGeneration;
+    w.add(jsonEncode({'type': 'ping'}));
+    final sentAt = DateTime.now();
+    Future.delayed(_pongWatchdog, () {
+      if (generation != _pingGeneration) return; // superseded by a newer ping
+      final stillOpen = _ws != null && _ws!.readyState == WebSocket.open;
+      if (stillOpen && _lastPongAt.isBefore(sentAt)) {
+        _log('no pong within ${_pongWatchdog.inSeconds}s - reconnecting');
+        _ws = null;
+        _connectionId = '';
+        _heartbeat?.cancel();
+        _heartbeat = null;
+        try {
+          unawaited(w.close());
+        } catch (_) {}
+      }
+    });
+  }
+
   void _scanFrame(dynamic data) {
-    if (_connectionId.isNotEmpty) return; // only the first frame matters
     try {
       final j = jsonDecode(data as String) as Map<String, dynamic>;
+      // Pong watchdog feedback (every ping is answered with this).
+      if (j['type'] == 'pong') {
+        _lastPongAt = DateTime.now();
+        return;
+      }
       if (j['type'] == 'message' && j['headers'] is Map) {
         final headers = j['headers'] as Map<String, dynamic>;
         for (final k in headers.keys) {
-          if (k.toLowerCase() == 'spotify-connection-id') {
+          if (k.toLowerCase() == 'spotify-connection-id' &&
+              _connectionId.isEmpty) {
             _connectionId = headers[k] as String;
             _log('connection-id OK');
           }
