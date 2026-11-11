@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hetu_spotube_plugin/hetu_spotube_plugin.dart';
-import 'package:media_kit/media_kit.dart' hide Track;
+import 'package:media_kit/media_kit.dart' hide Track, Player;
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/audio_player/audio_player.dart';
 import 'package:spotube/services/audio_player/audio_player.dart';

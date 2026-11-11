@@ -217,7 +217,7 @@ class MetadataPlugin {
     required String pluginSlug,
     spotube_plugin.Player Function()? createPlayer,
     void Function()? onRequestRefresh,
-  }) {
+  }) : _playerFactory = createPlayer {
     auth = MetadataAuthEndpoint(hetu);
 
     audioSource = MetadataPluginAudioSourceEndpoint(hetu);
@@ -267,10 +267,11 @@ class MetadataPlugin {
     )..start();
   }
 
+  final spotube_plugin.Player? Function()? _playerFactory;
   spotube_plugin.Player? _connectPlayer;
 
   spotube_plugin.Player get _connectPlayerInstance {
-    final factory = createPlayer;
+    final factory = _playerFactory;
     if (factory == null) {
       throw StateError('no player factory - Connect commands unavailable');
     }
