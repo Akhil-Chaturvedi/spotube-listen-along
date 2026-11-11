@@ -26,6 +26,7 @@ import 'package:spotube/services/metadata/endpoints/search.dart';
 import 'package:spotube/services/metadata/endpoints/track.dart';
 import 'package:spotube/services/metadata/endpoints/core.dart';
 import 'package:spotube/services/metadata/endpoints/listen_along.dart';
+import 'package:spotube/services/metadata/endpoints/mirror_telemetry.dart';
 import 'package:spotube/services/metadata/endpoints/user.dart';
 import 'package:spotube/services/spotify_session/presence_publisher.dart';
 import 'package:spotube/services/spotify_session/spotify_session.dart';
@@ -252,7 +253,7 @@ class MetadataPlugin {
       onRequestRefresh?.call();
       listenAlong.pokeForFeedChange();
     };
-    // Broadcast direction (opt-in via the plugin's toggle card): declare a
+    // Broadcast direction (opt-in via Settings -> Playback): declare a
     // virtual Connect device so friends' Friend Activity shows what Spotube
     // plays. Owns its dealer WS + PUTs; idle unless la_publish_enabled.
     presencePublisher = SpotifyPresencePublisher(
@@ -260,6 +261,133 @@ class MetadataPlugin {
       pluginSlug: pluginSlug,
       tokenProvider: () async => spotifySession.currentToken,
       createPlayer: createPlayer,
+      onCommand: _handleConnectCommand,
     )..start();
+  }
+
+  spotube_plugin.Player? _connectPlayer;
+
+  spotube_plugin.Player get _connectPlayerInstance {
+    final factory = createPlayer;
+    if (factory == null) {
+      throw StateError('no player factory - Connect commands unavailable');
+    }
+    return _connectPlayer ??= factory();
+  }
+
+  /// Commands remote Spotify clients send to our virtual device (dealer
+  /// `request` frames). Returns true when applied - that drives the dealer
+  /// reply's success flag, which is what makes the official client's button
+  /// stop spinning.
+  Future<bool> _handleConnectCommand(
+    String endpoint,
+    Map<String, dynamic> command,
+  ) async {
+    final value = command['value'];
+    final valueInt = (value is num) ? value.toInt() : int.tryParse('$value');
+    final valueDouble =
+        (value is num) ? value.toDouble() : double.tryParse('$value');
+    final contextUri = (command['context_uri'] ?? value ?? '').toString();
+    unawaited(
+      MirrorTelemetry.log(
+        'Publish',
+        'handling endpoint=$endpoint value=$value context=$contextUri',
+      ),
+    );
+    try {
+      switch (endpoint) {
+        case 'pause':
+          await _connectPlayerInstance.pause();
+          return true;
+        case 'resume':
+          await _connectPlayerInstance.play();
+          return true;
+        case 'seek_to':
+          if (valueInt == null || valueInt < 0) return false;
+          await _connectPlayerInstance.seek(valueInt);
+          return true;
+        case 'skip_next':
+          await _connectPlayerInstance.next();
+          return true;
+        case 'skip_prev':
+          await _connectPlayerInstance.previous();
+          return true;
+        case 'set_volume':
+          final sv = _connectPlayerInstance.setVolume;
+          if (sv == null || valueDouble == null) return false;
+          await sv((valueDouble / 65536).clamp(0.0, 1.0));
+          return true;
+        case 'play':
+        case 'transfer':
+          final tracks = await _resolveConnectContext(contextUri);
+          if (tracks.isEmpty) {
+            unawaited(
+              MirrorTelemetry.log(
+                'Publish',
+                'play/transfer: context "$contextUri" resolved to no tracks',
+              ),
+            );
+            return false;
+          }
+          await _connectPlayerInstance.loadTracks(
+            tracks,
+            autoPlay: true,
+            initialIndex: 0,
+          );
+          return true;
+        default:
+          // Shuffle/repeat/queue-style commands: accepted so controlling
+          // clients don't show errors, but Spotube's player has no
+          // primitives for them yet.
+          unawaited(
+            MirrorTelemetry.log(
+              'Publish',
+              'endpoint=$endpoint acked without effect (no host primitive)',
+            ),
+          );
+          return true;
+      }
+    } catch (e) {
+      unawaited(
+        MirrorTelemetry.log('Publish', 'command endpoint=$endpoint failed: $e'),
+      );
+      return false;
+    }
+  }
+
+  /// Resolves a Spotify context URI (track/playlist/album) to player track
+  /// maps through the active metadata plugin. Generic: whatever plugin is
+  /// active supplies the data.
+  Future<List<Map<String, dynamic>>> _resolveConnectContext(String uri) async {
+    try {
+      if (uri.startsWith('spotify:track:')) {
+        final t = await track.getTrack(uri.split(':').last);
+        return [t.toJson()];
+      }
+      if (uri.startsWith('spotify:playlist:')) {
+        final page = await playlist.tracks(
+          uri.split(':').last,
+          offset: 0,
+          limit: 50,
+        );
+        return page.items.map((t) => t.toJson()).toList();
+      }
+      if (uri.startsWith('spotify:album:')) {
+        final page = await album.tracks(
+          uri.split(':').last,
+          offset: 0,
+          limit: 50,
+        );
+        return page.items.map((t) => t.toJson()).toList();
+      }
+      unawaited(
+        MirrorTelemetry.log('Publish', 'context "$uri" type not supported'),
+      );
+    } catch (e) {
+      unawaited(
+        MirrorTelemetry.log('Publish', 'context resolve "$uri" failed: $e'),
+      );
+    }
+    return [];
   }
 }

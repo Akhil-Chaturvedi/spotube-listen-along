@@ -298,6 +298,32 @@ class MetadataPluginNotifier extends AsyncNotifier<MetadataPluginState> {
     return Directory(pluginExtractionDirPath);
   }
 
+  /// Generic plugin-settings contract: reads the optional "settings" array
+  /// from an installed plugin's plugin.json. Any plugin can declare
+  /// `{id, title, description, type: "switch", defaultValue}` entries which
+  /// the host renders (Settings -> Playback) and persists under the plugin's
+  /// LocalStorage keys (`spotube_plugin.<slug>.<id>`), so the plugin itself
+  /// just reads them like any other LocalStorage value.
+  Future<List<Map<String, dynamic>>> readPluginSettings(
+    PluginConfiguration plugin,
+  ) async {
+    try {
+      final dir = await _getPluginExtractionDir(plugin);
+      final file = File(join(dir.path, "plugin.json"));
+      if (!await file.exists()) return [];
+      final json = jsonDecode(await file.readAsString());
+      final settings = json["settings"];
+      return settings is List
+          ? settings
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   Future<PluginConfiguration> extractPluginArchive(List<int> bytes) async {
     final archive = ZipDecoder().decodeBytes(bytes);
     final pluginJson = archive

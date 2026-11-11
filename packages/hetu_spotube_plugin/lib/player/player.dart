@@ -45,6 +45,11 @@ class Player {
   ///    positionMs: int, isPlaying: bool }`
   final Future<Map<String, dynamic>> Function() getState;
 
+  /// Set the output volume, 0.0 (silent) to 1.0 (max). Optional: hosts
+  /// whose player cannot control volume leave it null (remote volume
+  /// commands are then rejected).
+  final Future<void> Function(double volume)? setVolume;
+
   const Player({
     required this.loadTracks,
     required this.playTrack,
@@ -55,5 +60,6 @@ class Player {
     required this.previous,
     required this.seek,
     required this.getState,
+    this.setVolume,
   });
 }

@@ -57,5 +57,8 @@ Player createSpotubePlayer(Ref ref) {
         'isPlaying': state.playing,
       };
     },
+    setVolume: (volume) async {
+      await audioPlayer.setVolume(volume.clamp(0.0, 1.0));
+    },
   );
 }

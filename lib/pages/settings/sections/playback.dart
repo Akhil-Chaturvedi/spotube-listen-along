@@ -11,6 +11,7 @@ import 'package:spotube/collections/spotube_icons.dart';
 import 'package:spotube/components/adaptive/adaptive_select_tile.dart';
 import 'package:spotube/models/database/database.dart';
 import 'package:spotube/modules/settings/playback/edit_connect_port_dialog.dart';
+import 'package:spotube/modules/settings/plugin_settings_tiles.dart';
 import 'package:spotube/modules/settings/section_card_with_heading.dart';
 import 'package:spotube/extensions/context.dart';
 import 'package:spotube/modules/settings/youtube_engine_not_installed_dialog.dart';
@@ -211,6 +212,11 @@ class SettingsPlaybackSection extends HookConsumerWidget {
             ],
           ),
         ),
+        // Switch settings declared by installed plugins via their
+        // plugin.json ("settings" array) - e.g. "Share my Spotube
+        // playback". Generic contract, rendered like the host's own
+        // switches and persisted under the plugin's LocalStorage keys.
+        const PluginSettingsTiles(),
       ],
     );
   }

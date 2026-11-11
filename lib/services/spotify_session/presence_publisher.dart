@@ -42,6 +42,12 @@ class SpotifyPresencePublisher {
     required this.pluginSlug,
     required this.tokenProvider,
     this.createPlayer,
+    // Generic Connect-command seam: receives every remote command other
+    // Spotify clients send to our virtual device ("play", "pause",
+    // "seek_to", "skip_next", ... with the raw command JSON) and returns
+    // whether it was handled (drives the dealer reply's success flag and
+    // the command-ack fields of the next connect-state PUT).
+    this.onCommand,
     // Official clients are event-driven (they ARE the player); 1s polling is
     // the closest cheap approximation. Network only fires on real changes.
     this.pollInterval = const Duration(seconds: 1),
@@ -60,9 +66,12 @@ class SpotifyPresencePublisher {
   final spotube_plugin.Player? Function()? createPlayer;
   final Duration pollInterval;
   final Duration keepaliveInterval;
+  final Future<bool> Function(String endpoint, Map<String, dynamic> command)?
+      onCommand;
 
   Timer? _timer;
   Timer? _heartbeat;
+  bool _tickBusy = false;
   spotube_plugin.Player? _player;
 
   // Dealer keepalive state. Values mirror librespot-java 1.6.5 exactly
@@ -87,13 +96,18 @@ class SpotifyPresencePublisher {
   DateTime _lastPutAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _lastUnmappedId;
   bool _loggedNoToken = false;
+  bool _pendingCommandAck = false;
+  String? _lastCommandSender;
+  int? _lastCommandMessageId;
 
   static const _clientId = '65b708073fc0480ea92a077233ca87bd';
   static const _deviceName = 'Spotube';
 
   String _key(String key) => 'spotube_plugin.$pluginSlug.$key';
 
-  bool get _enabled => (prefs.getString(_key('la_publish_enabled')) ?? '0') == '1';
+  bool get _enabled =>
+      prefs.getBool(_key('la_publish_enabled')) ??
+      (prefs.getString(_key('la_publish_enabled')) == '1');
 
   /// Starts the low-frequency supervision loop. Cheap when disabled or
   /// idle: one prefs read + (when enabled) one local player getState per
@@ -114,10 +128,19 @@ class SpotifyPresencePublisher {
   }
 
   Future<void> _tick() async {
+    // Reentrancy guard: with a 1s poll, a tick that is still awaiting its
+    // own PUT response must not let the next tick interleave (device logs
+    // showed two concurrent first PUTs 120ms apart, both claiming
+    // SPIRC_HELLO). Drop the tick instead of queueing; the next tick sees
+    // the settled state.
+    if (_tickBusy) return;
+    _tickBusy = true;
     try {
       await _tickInner();
     } catch (e) {
       _log('tick error: $e');
+    } finally {
+      _tickBusy = false;
     }
   }
 
@@ -165,15 +188,24 @@ class SpotifyPresencePublisher {
     }
     final trackChanged = spotifyId != _activeTrackId;
     final playChanged = isPlaying != _isPlaying;
-    if (!isPlaying && !trackChanged && !playChanged) {
+    final commandAck = _pendingCommandAck;
+    if (!isPlaying && !trackChanged && !playChanged && !commandAck) {
       // Paused and already published as paused: nothing to do (no keepalive
       // spam while idle; the feed entry simply ages out like real clients).
       return;
     }
-    if (!isPlaying && !_everPublished) return; // idle start, nothing live yet
+    if (!isPlaying && !_everPublished && !commandAck) {
+      return; // idle start, nothing live yet
+    }
     final keepaliveDue =
         DateTime.now().difference(_lastPutAt) >= keepaliveInterval;
-    if (isPlaying && !trackChanged && !playChanged && !keepaliveDue) return;
+    if (isPlaying &&
+        !trackChanged &&
+        !playChanged &&
+        !commandAck &&
+        !keepaliveDue) {
+      return;
+    }
 
     final posMs = (state['positionMs'] as num?)?.toInt() ?? 0;
     await _putState(
@@ -189,6 +221,7 @@ class SpotifyPresencePublisher {
     _durationMs = durationMs;
     _everPublished = true;
     _lastPutAt = DateTime.now();
+    _pendingCommandAck = false;
   }
 
   /// Publishes one paused state (so followers stop seeing "playing") and
@@ -303,22 +336,115 @@ class SpotifyPresencePublisher {
   void _scanFrame(dynamic data) {
     try {
       final j = jsonDecode(data as String) as Map<String, dynamic>;
-      // Pong watchdog feedback (every ping is answered with this).
-      if (j['type'] == 'pong') {
-        _lastPongAt = DateTime.now();
+      switch (j['type']) {
+        case 'pong':
+          _lastPongAt = DateTime.now();
+          break;
+        case 'request':
+          unawaited(_handleRequest(j));
+          break;
+        case 'message':
+          if (j['headers'] is Map) {
+            final headers = j['headers'] as Map<String, dynamic>;
+            for (final k in headers.keys) {
+              if (k.toLowerCase() == 'spotify-connection-id' &&
+                  _connectionId.isEmpty) {
+                _connectionId = headers[k] as String;
+                _log('connection-id OK');
+              }
+            }
+          }
+          break;
+      }
+    } catch (e) {
+      _log('frame parse error: $e');
+    }
+  }
+
+  /// Spotify Connect commands arrive as dealer `request` frames routed to
+  /// `hm://connect-state/v1/<our deviceId>` (librespot-java DealerClient.
+  /// handleRequest). Each must be answered with a `reply` frame echoing the
+  /// request's `key`, or the controlling client shows an error.
+  Future<void> _handleRequest(Map<String, dynamic> frame) async {
+    final mid = frame['message_ident'] as String?;
+    final key = frame['key'];
+    if (mid == null || key == null) {
+      _log('request missing mid/key: $mid');
+      return;
+    }
+    if (!mid.startsWith('hm://connect-state/v1/$_deviceId')) {
+      _log('request for other target ignored: $mid');
+      return;
+    }
+
+    // The payload may be gzip-compressed (Transfer-Encoding: gzip +
+    // base64 "compressed" body), exactly as librespot handles it.
+    var payload = frame['payload'];
+    if (payload is Map && payload['compressed'] != null) {
+      try {
+        final gzipBytes =
+            base64Decode((payload['compressed'] as String).trim());
+        final decoded = gzip.decode(gzipBytes);
+        payload = jsonDecode(utf8.decode(decoded)) as Map<String, dynamic>;
+      } catch (e) {
+        _log('gzip payload decode failed: $e');
+        _sendReply(key as String, false);
         return;
       }
-      if (j['type'] == 'message' && j['headers'] is Map) {
-        final headers = j['headers'] as Map<String, dynamic>;
-        for (final k in headers.keys) {
-          if (k.toLowerCase() == 'spotify-connection-id' &&
-              _connectionId.isEmpty) {
-            _connectionId = headers[k] as String;
-            _log('connection-id OK');
-          }
-        }
+    }
+    if (payload is! Map) {
+      _log('request payload missing');
+      _sendReply(key as String, false);
+      return;
+    }
+    final command = payload['command'];
+    if (command is! Map) {
+      _log('request command missing');
+      _sendReply(key as String, false);
+      return;
+    }
+
+    final endpoint = (command['endpoint'] ?? '').toString();
+    final messageId = (payload['message_id'] as num?)?.toInt();
+    final sender = payload['sent_by_device_id'];
+    _log(
+      'command received: endpoint=$endpoint '
+      'value=${command['value']} msgId=$messageId sender=$sender '
+      'keys=${command.keys.toList()}',
+    );
+
+    var handled = false;
+    final callback = onCommand;
+    if (callback != null) {
+      try {
+        handled = await callback(
+          endpoint,
+          Map<String, dynamic>.from(command),
+        );
+      } catch (e) {
+        _log('command handler error: $e');
+        handled = false;
       }
-    } catch (_) {}
+    } else {
+      _log('no command handler wired - rejecting');
+    }
+    _log('command endpoint=$endpoint handled=$handled');
+    _sendReply(key as String, handled);
+    if (handled) {
+      _lastCommandSender = sender is String ? sender : null;
+      _lastCommandMessageId = messageId;
+      _pendingCommandAck = true;
+    }
+  }
+
+  void _sendReply(String key, bool success) {
+    final w = _ws;
+    if (w == null || w.readyState != WebSocket.open) {
+      _log('reply skipped - dealer closed');
+      return;
+    }
+    w.add('{"type":"reply", "key": "$key", "payload": {"success": $success}}');
+    _log('reply sent: key=$key success=$success');
   }
 
   Future<void> _putState(
@@ -359,7 +485,15 @@ class SpotifyPresencePublisher {
           ..msg(4, (caps) => caps
             ..enumv(2, 1) // can_be_player
             ..enumv(7, 1) // is_observable
-            ..str(9, 'audio'))
+            ..enumv(8, 64) // volume_steps
+            ..str(9, 'audio')
+            ..str(9, 'episode')
+            ..enumv(10, 1) // command_acks
+            ..enumv(16, 1) // is_controllable
+            ..enumv(19, 1) // supports_transfer_command
+            ..enumv(20, 1) // supports_command_request
+            ..enumv(22, 1) // needs_full_player_state
+            ..enumv(23, 1)) // supports_gzip_pushes
           ..str(6, '1.2.52.442.g0b8abddf')
           ..enumv(7, 1) // device_type = COMPUTER
           ..str(9, '3.2.6')
@@ -378,7 +512,11 @@ class SpotifyPresencePublisher {
       ..enumv(3, 2) // member_type = CONNECT_STATE
       ..enumv(4, 1) // is_active
       ..enumv(5, reason)
-      ..enumv(6, ++_seq);
+      ..enumv(6, ++_seq)
+      // Command acks: which device last commanded us and its message id,
+      // so controlling clients see their command as accepted.
+      ..str(7, _lastCommandSender ?? '')
+      ..enumv(8, _lastCommandMessageId ?? 0);
     try {
       final req = await HttpClient().putUrl(
         Uri.parse(
