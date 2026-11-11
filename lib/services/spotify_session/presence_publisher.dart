@@ -100,6 +100,28 @@ class SpotifyPresencePublisher {
   String? _lastCommandSender;
   int? _lastCommandMessageId;
 
+  // Full-player-state reflection (official clients render our device's
+  // queue view and shuffle/repeat toggles from the published state).
+  String _sessionId = '';
+  String _playbackId = '';
+  DateTime? _playingSince;
+  int _accumulatedPlayingMs = 0;
+  bool _lastShuffling = false;
+  bool _lastRepeatingContext = false;
+  bool _lastRepeatingTrack = false;
+  String? _contextUri; // set when playback was started via a remote command
+
+  /// Context the virtual device is "playing from" (only knowable when the
+  /// context was started remotely; spotube-local queues have no context).
+  void setActiveContext(String? uri) {
+    _contextUri = (uri == null || uri.isEmpty) ? null : uri;
+  }
+
+  String _randHex(int len) {
+    final rng = Random.secure();
+    return List.generate(len, (_) => '0123456789abcdef'[rng.nextInt(16)]).join();
+  }
+
   static const _clientId = '65b708073fc0480ea92a077233ca87bd';
   static const _deviceName = 'Spotube';
 
@@ -188,6 +210,55 @@ class SpotifyPresencePublisher {
     }
     final trackChanged = spotifyId != _activeTrackId;
     final playChanged = isPlaying != _isPlaying;
+
+    // Playing-time bookkeeping (always runs, even on ticks without a PUT).
+    final now = DateTime.now();
+    if (playChanged) {
+      if (isPlaying) {
+        _playingSince = now;
+      } else if (_playingSince != null) {
+        _accumulatedPlayingMs +=
+            now.difference(_playingSince!).inMilliseconds;
+        _playingSince = null;
+      }
+    }
+    if (trackChanged) {
+      _playbackId = _randHex(32);
+    }
+
+    // Queue reflection: the official client's queue view for our device is
+    // rendered from prev/next tracks in the published state.
+    final queue = (state['queue'] as List?) ?? const [];
+    final currentIndex = (state['currentIndex'] as num?)?.toInt() ?? 0;
+    String? uriAt(int i) {
+      if (i < 0 || i >= queue.length) return null;
+      final t = queue[i];
+      if (t is! Map) return null;
+      final qid = t['id']?.toString();
+      if (qid == null || !RegExp(r'^[0-9A-Za-z]{22}$').hasMatch(qid)) {
+        return null;
+      }
+      return 'spotify:track:$qid';
+    }
+
+    final nextUris = <String>[];
+    for (var i = currentIndex + 1;
+        i < queue.length && nextUris.length < 10;
+        i++) {
+      final u = uriAt(i);
+      if (u != null) nextUris.add(u);
+    }
+    final prevUris = <String>[];
+    for (var i = currentIndex - 1;
+        i >= 0 && prevUris.length < 10;
+        i--) {
+      final u = uriAt(i);
+      if (u != null) prevUris.add(u);
+    }
+    _lastShuffling = state['shufflingContext'] == true;
+    _lastRepeatingContext = state['repeatingContext'] == true;
+    _lastRepeatingTrack = state['repeatingTrack'] == true;
+
     final commandAck = _pendingCommandAck;
     if (!isPlaying && !trackChanged && !playChanged && !commandAck) {
       // Paused and already published as paused: nothing to do (no keepalive
@@ -215,6 +286,13 @@ class SpotifyPresencePublisher {
       durationMs: durationMs,
       isPlaying: isPlaying,
       reason: _everPublished ? 4 : 1, // PLAYER_STATE_CHANGED : SPIRC_HELLO
+      contextUri: _contextUri,
+      playbackId: _playbackId,
+      nextTrackUris: nextUris,
+      prevTrackUris: prevUris,
+      shuffling: _lastShuffling,
+      repeatingContext: _lastRepeatingContext,
+      repeatingTrack: _lastRepeatingTrack,
     );
     _activeTrackId = spotifyId;
     _isPlaying = isPlaying;
@@ -454,6 +532,13 @@ class SpotifyPresencePublisher {
     required int durationMs,
     required bool isPlaying,
     required int reason,
+    String? contextUri,
+    String? playbackId,
+    List<String> nextTrackUris = const [],
+    List<String> prevTrackUris = const [],
+    bool shuffling = false,
+    bool repeatingContext = false,
+    bool repeatingTrack = false,
   }) async {
     if (_deviceId.isEmpty) {
       _deviceId = prefs.getString(_key('la_publish_device_id')) ?? '';
@@ -500,15 +585,38 @@ class SpotifyPresencePublisher {
           ..str(10, _deviceId)
           ..enumv(11, 0) // is_private_session = false
           ..str(13, _clientId))
-        ..msg(2, (player) => player
-          ..enumv(1, now.millisecondsSinceEpoch) // timestamp
-          ..msg(7, (track) => track
-            ..str(1, trackUri)
-            ..str(6, 'context'))
-          ..enumv(10, positionMs) // position_as_of_timestamp
-          ..enumv(11, durationMs) // duration
-          ..enumv(12, isPlaying ? 1 : 0) // is_playing
-          ..enumv(13, isPlaying ? 0 : 1))) // is_paused
+        ..msg(2, (player) {
+          player
+            ..enumv(1, now.millisecondsSinceEpoch) // timestamp
+            // "playing from <context>" on controlling clients (only known
+            // when playback was started remotely).
+            ..str(2, _contextUri ?? '')
+            ..msg(5, (origin) => origin
+              ..str(1, 'spotube') // feature_identifier
+              ..str(2, '1.0.0')) // feature_version
+            ..msg(7, (track) => track
+              ..str(1, trackUri)
+              ..str(6, 'context'))
+            ..str(8, playbackId ?? '') // playback_id
+            ..enumv(10, positionMs) // position_as_of_timestamp
+            ..enumv(11, durationMs) // duration
+            ..enumv(12, isPlaying ? 1 : 0) // is_playing
+            ..enumv(13, isPlaying ? 0 : 1) // is_paused
+            // Options: shuffle/repeat toggle states for our device.
+            ..msg(16, (options) => options
+              ..enumv(1, shuffling ? 1 : 0)
+              ..enumv(2, repeatingContext ? 1 : 0)
+              ..enumv(3, repeatingTrack ? 1 : 0))
+            ..str(23, _sessionId.isEmpty ? (_sessionId = _randHex(32)) : _sessionId)
+            ..str(24, '$_seq'); // queue_revision
+          // Queue reflection: official clients render these as our queue.
+          for (final uri in prevTrackUris.take(10)) {
+            player.msg(19, (t) => t..str(1, uri));
+          }
+          for (final uri in nextTrackUris.take(10)) {
+            player.msg(20, (t) => t..str(1, uri));
+          }
+        }))
       ..enumv(3, 2) // member_type = CONNECT_STATE
       ..enumv(4, 1) // is_active
       ..enumv(5, reason)

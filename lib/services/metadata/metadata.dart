@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:media_kit/media_kit.dart' hide Track;
+import 'package:spotube/services/audio_player/audio_player.dart';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:hetu_otp_util/hetu_otp_util.dart';
@@ -287,6 +289,8 @@ class MetadataPlugin {
     final valueInt = (value is num) ? value.toInt() : int.tryParse('$value');
     final valueDouble =
         (value is num) ? value.toDouble() : double.tryParse('$value');
+    final valueBool =
+        value == true || value == 'true' || value == 1 || value == '1';
     final contextUri = (command['context_uri'] ?? value ?? '').toString();
     unawaited(
       MirrorTelemetry.log(
@@ -329,10 +333,29 @@ class MetadataPlugin {
             );
             return false;
           }
+          presencePublisher.setActiveContext(contextUri);
           await _connectPlayerInstance.loadTracks(
             tracks,
             autoPlay: true,
             initialIndex: 0,
+          );
+          return true;
+        case 'add_to_queue':
+          final tracks = await _resolveConnectContext(contextUri);
+          if (tracks.isEmpty) return false;
+          await _connectPlayerInstance.addToQueue(tracks.first);
+          return true;
+        case 'set_shuffling_context':
+          await audioPlayer.setShuffle(valueBool);
+          return true;
+        case 'set_repeating_context':
+          await audioPlayer.setLoopMode(
+            valueBool ? PlaylistMode.loop : PlaylistMode.none,
+          );
+          return true;
+        case 'set_repeating_track':
+          await audioPlayer.setLoopMode(
+            valueBool ? PlaylistMode.single : PlaylistMode.none,
           );
           return true;
         default:

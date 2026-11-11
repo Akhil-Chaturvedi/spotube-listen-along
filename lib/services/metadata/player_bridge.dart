@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hetu_spotube_plugin/hetu_spotube_plugin.dart';
+import 'package:media_kit/media_kit.dart' hide Track;
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/audio_player/audio_player.dart';
 import 'package:spotube/services/audio_player/audio_player.dart';
@@ -55,6 +56,11 @@ Player createSpotubePlayer(Ref ref) {
         'currentIndex': state.currentIndex,
         'positionMs': audioPlayer.position.inMilliseconds,
         'isPlaying': state.playing,
+        // Connect-state reflection: official clients read these from our
+        // published state to render toggle states for our virtual device.
+        'shufflingContext': state.shuffled,
+        'repeatingContext': state.loopMode == PlaylistMode.loop,
+        'repeatingTrack': state.loopMode == PlaylistMode.single,
       };
     },
     setVolume: (volume) async {
