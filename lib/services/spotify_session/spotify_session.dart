@@ -148,6 +148,15 @@ class SpotifySessionService {
   String? _me;
   DateTime? _useUntil;
 
+  /// Current, non-expired login5 access token (or null while the blob is
+  /// missing/rejected/being refreshed). Read-only surface for companions
+  /// like SpotifyPresencePublisher; the tick loop keeps it fresh.
+  String? get currentToken {
+    if (_token == null || _token!.isEmpty) return null;
+    if (DateTime.now().millisecondsSinceEpoch >= _tokenExpMs) return null;
+    return _token;
+  }
+
   /// Feed projection we last pushed a refresh for (see [_refreshFeed]).
   String? _notifiedSig;
 

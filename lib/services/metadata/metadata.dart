@@ -27,6 +27,7 @@ import 'package:spotube/services/metadata/endpoints/track.dart';
 import 'package:spotube/services/metadata/endpoints/core.dart';
 import 'package:spotube/services/metadata/endpoints/listen_along.dart';
 import 'package:spotube/services/metadata/endpoints/user.dart';
+import 'package:spotube/services/spotify_session/presence_publisher.dart';
 import 'package:spotube/services/spotify_session/spotify_session.dart';
 import 'package:spotube/services/youtube_engine/youtube_engine.dart';
 
@@ -177,6 +178,8 @@ class MetadataPlugin {
     return MetadataPlugin._(
       hetu,
       spotifySession,
+      sharedPreferences: sharedPreferences,
+      pluginSlug: config.slug,
       createPlayer: createPlayer,
       onRequestRefresh: onRequestRefresh,
     );
@@ -184,6 +187,12 @@ class MetadataPlugin {
 
   final Hetu hetu;
   final SpotifySessionService spotifySession;
+
+  /// Opt-in "share my Spotube playback on Spotify" companion of the session
+  /// service (dealer WS + connect-state PUTs; see its class doc for the
+  /// live-verified protocol). Cheap no-op unless the plugin's
+  /// `la_publish_enabled` LocalStorage key is set.
+  late final SpotifyPresencePublisher presencePublisher;
 
   late final MetadataAuthEndpoint auth;
 
@@ -201,6 +210,8 @@ class MetadataPlugin {
   MetadataPlugin._(
     this.hetu,
     this.spotifySession, {
+    required SharedPreferences sharedPreferences,
+    required String pluginSlug,
     spotube_plugin.Player Function()? createPlayer,
     void Function()? onRequestRefresh,
   }) {
@@ -241,5 +252,14 @@ class MetadataPlugin {
       onRequestRefresh?.call();
       listenAlong.pokeForFeedChange();
     };
+    // Broadcast direction (opt-in via the plugin's toggle card): declare a
+    // virtual Connect device so friends' Friend Activity shows what Spotube
+    // plays. Owns its dealer WS + PUTs; idle unless la_publish_enabled.
+    presencePublisher = SpotifyPresencePublisher(
+      prefs: sharedPreferences,
+      pluginSlug: pluginSlug,
+      tokenProvider: () async => spotifySession.currentToken,
+      createPlayer: createPlayer,
+    )..start();
   }
 }
