@@ -267,7 +267,7 @@ class MetadataPlugin {
     )..start();
   }
 
-  final spotube_plugin.Player? Function()? _playerFactory;
+  final spotube_plugin.Player Function()? _playerFactory;
   spotube_plugin.Player? _connectPlayer;
 
   spotube_plugin.Player get _connectPlayerInstance {
