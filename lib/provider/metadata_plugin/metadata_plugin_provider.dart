@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:spotube/models/database/database.dart';
 import 'package:spotube/models/metadata/metadata.dart';
 import 'package:spotube/provider/database/database.dart';
+import 'package:spotube/provider/user_preferences/user_preferences_provider.dart';
 import 'package:spotube/provider/youtube_engine/youtube_engine.dart';
 import 'package:spotube/services/dio/dio.dart';
 import 'package:spotube/services/logger/logger.dart';
@@ -639,6 +640,10 @@ final metadataPluginProvider = FutureProvider<MetadataPlugin?>(
       // (e.g. a live "Friend Activity" list) instead of us polling blindly.
       onRequestRefresh: () =>
           ref.invalidate(metadataPluginBrowseSectionsProvider),
+      // Remote control of the virtual Connect device is gated behind the
+      // host's own "Enable Connect" setting (presence still broadcasts).
+      remoteControlEnabled: () =>
+          ref.read(userPreferencesProvider).enableConnect,
     );
   },
 );

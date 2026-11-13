@@ -45,6 +45,7 @@ class MetadataPlugin {
     Uint8List byteCode, {
     spotube_plugin.Player Function()? createPlayer,
     void Function()? onRequestRefresh,
+    bool Function()? remoteControlEnabled,
   }) async {
     final sharedPreferences = await SharedPreferences.getInstance();
     BuildContext? pageContext;
@@ -185,6 +186,7 @@ class MetadataPlugin {
       pluginSlug: config.slug,
       createPlayer: createPlayer,
       onRequestRefresh: onRequestRefresh,
+      remoteControlEnabled: remoteControlEnabled,
     );
   }
 
@@ -217,6 +219,7 @@ class MetadataPlugin {
     required String pluginSlug,
     spotube_plugin.Player Function()? createPlayer,
     void Function()? onRequestRefresh,
+    bool Function()? remoteControlEnabled,
   }) : _playerFactory = createPlayer {
     auth = MetadataAuthEndpoint(hetu);
 
@@ -264,6 +267,7 @@ class MetadataPlugin {
       tokenProvider: () async => spotifySession.currentToken,
       createPlayer: createPlayer,
       onCommand: _handleConnectCommand,
+      remoteControlEnabled: remoteControlEnabled,
     )..start();
   }
 

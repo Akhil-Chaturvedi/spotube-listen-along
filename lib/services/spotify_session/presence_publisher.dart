@@ -42,12 +42,15 @@ class SpotifyPresencePublisher {
     required this.pluginSlug,
     required this.tokenProvider,
     this.createPlayer,
-    // Generic Connect-command seam: receives every remote command other
     // Spotify clients send to our virtual device ("play", "pause",
     // "seek_to", "skip_next", ... with the raw command JSON) and returns
     // whether it was handled (drives the dealer reply's success flag and
     // the command-ack fields of the next connect-state PUT).
     this.onCommand,
+    // Remote control is gated behind the host's "Enable Connect" setting:
+    // when false the device still broadcasts presence (friend feed) but is
+    // NOT advertised controllable and rejects commands.
+    this.remoteControlEnabled,
     // Official clients are event-driven (they ARE the player); 1s polling is
     // the closest cheap approximation. Network only fires on real changes.
     this.pollInterval = const Duration(seconds: 1),
@@ -68,6 +71,9 @@ class SpotifyPresencePublisher {
   final Duration keepaliveInterval;
   final Future<bool> Function(String endpoint, Map<String, dynamic> command)?
       onCommand;
+  final bool Function()? remoteControlEnabled;
+
+  bool get _remoteControl => remoteControlEnabled?.call() ?? false;
 
   Timer? _timer;
   Timer? _heartbeat;
@@ -454,6 +460,14 @@ class SpotifyPresencePublisher {
       _log('request for other target ignored: $mid');
       return;
     }
+    if (!_remoteControl) {
+      // "Enable Connect" is off: we still broadcast presence, but the device
+      // is not controllable (and not advertised as such). Anything that
+      // slips through anyway gets an explicit rejection reply.
+      _log('remote control disabled (Enable Connect off) - rejecting');
+      _sendReply(key as String, false);
+      return;
+    }
 
     // The payload may be gzip-compressed (Transfer-Encoding: gzip +
     // base64 "compressed" body), exactly as librespot handles it.
@@ -567,18 +581,27 @@ class SpotifyPresencePublisher {
           ..enumv(1, 1) // can_play
           ..enumv(2, 65536) // volume
           ..str(3, _deviceName)
-          ..msg(4, (caps) => caps
-            ..enumv(2, 1) // can_be_player
-            ..enumv(7, 1) // is_observable
-            ..enumv(8, 64) // volume_steps
-            ..str(9, 'audio')
-            ..str(9, 'episode')
-            ..enumv(10, 1) // command_acks
-            ..enumv(16, 1) // is_controllable
-            ..enumv(19, 1) // supports_transfer_command
-            ..enumv(20, 1) // supports_command_request
-            ..enumv(22, 1) // needs_full_player_state
-            ..enumv(23, 1)) // supports_gzip_pushes
+          ..msg(4, (caps) {
+            caps
+              ..enumv(2, 1) // can_be_player
+              ..enumv(7, 1) // is_observable
+              ..enumv(8, 64) // volume_steps
+              ..str(9, 'audio')
+              ..str(9, 'episode');
+            // Controllability is gated behind the host's "Enable Connect"
+            // setting: presence broadcasting works without it, remote
+            // control does not.
+            if (_remoteControl) {
+              caps
+                ..enumv(10, 1) // command_acks
+                ..enumv(16, 1) // is_controllable
+                ..enumv(19, 1) // supports_transfer_command
+                ..enumv(20, 1); // supports_command_request
+            }
+            caps
+              ..enumv(22, 1) // needs_full_player_state
+              ..enumv(23, 1); // supports_gzip_pushes
+          })
           ..str(6, '1.2.52.442.g0b8abddf')
           ..enumv(7, 1) // device_type = COMPUTER
           ..str(9, '3.2.6')
