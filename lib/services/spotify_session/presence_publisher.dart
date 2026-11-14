@@ -105,6 +105,10 @@ class SpotifyPresencePublisher {
   bool _pendingCommandAck = false;
   String? _lastCommandSender;
   int? _lastCommandMessageId;
+  /// Last volume we know of, in the DeviceInfo.units-per-max scale Spotify
+  /// uses (0..65536 over `volume_steps`=64). Published so the controlling
+  /// client's volume slider reflects the device after a set_volume command.
+  int _lastVolume = 65536;
 
   // Full-player-state reflection (official clients render our device's
   // queue view and shuffle/repeat toggles from the published state).
@@ -133,9 +137,20 @@ class SpotifyPresencePublisher {
 
   String _key(String key) => 'spotube_plugin.$pluginSlug.$key';
 
-  bool get _enabled =>
+  /// "Share my listening activity on Spotify" (plugin setting, Spotify's own
+  /// wording). Controls SOCIAL visibility only: on = friends see what you
+  /// play, off = the device runs as a private session (friends see nothing).
+  bool get _shareEnabled =>
       prefs.getBool(_key('la_publish_enabled')) ??
       (prefs.getString(_key('la_publish_enabled')) == '1');
+
+  /// The virtual device exists when EITHER feature wants it:
+  /// - sharing on  -> device visible to friends (is_private_session=false),
+  /// - Connect on  -> device visible+controllable in the devices picker.
+  /// The two are fully independent (4 combinations all behave sensibly),
+  /// mirroring how real Spotify clients separate private session from
+  /// remote control.
+  bool get _enabled => _shareEnabled || _remoteControl;
 
   /// Starts the low-frequency supervision loop. Cheap when disabled or
   /// idle: one prefs read + (when enabled) one local player getState per
@@ -202,11 +217,22 @@ class SpotifyPresencePublisher {
     final spotifyId =
         (id != null && RegExp(r'^[0-9A-Za-z]{22}$').hasMatch(id)) ? id : null;
     if (spotifyId == null) {
-      if (id != _lastUnmappedId) {
+      if (id != null && id != _lastUnmappedId) {
         _lastUnmappedId = id;
         _log('track unmappable to Spotify (id=$id) - not publishing');
       }
-      await _pausePublishing();
+      // Sharing on: pause the published state so friends stop seeing the
+      // stale "playing" entry. Sharing off: leave the (private) device as
+      // it is - it stays available for Connect control either way.
+      if (_shareEnabled) {
+        await _pausePublishing();
+      }
+      if (!_everPublished) {
+        // Idle presence: one SPIRC_HELLO so the "Spotube" device shows up
+        // in the official clients' devices picker immediately (real
+        // clients register on app start, not on first play).
+        await _putHello(token);
+      }
       return;
     }
     final isPlaying = state['isPlaying'] == true;
@@ -291,6 +317,7 @@ class SpotifyPresencePublisher {
       positionMs: posMs.clamp(0, 1000 * 60 * 60),
       durationMs: durationMs,
       isPlaying: isPlaying,
+      isPrivateSession: !_shareEnabled,
       reason: _everPublished ? 4 : 1, // PLAYER_STATE_CHANGED : SPIRC_HELLO
       contextUri: _contextUri,
       playbackId: _playbackId,
@@ -323,6 +350,7 @@ class SpotifyPresencePublisher {
         positionMs: 0,
         durationMs: _durationMs,
         isPlaying: false,
+        isPrivateSession: !_shareEnabled,
         reason: 4, // PLAYER_STATE_CHANGED
       );
       _lastPutAt = DateTime.now();
@@ -330,6 +358,24 @@ class SpotifyPresencePublisher {
     _activeTrackId = null;
     _everPublished = false;
     _isPlaying = false;
+  }
+
+  /// Idle SPIRC_HELLO: declares the device ACTIVE with an empty, paused
+  /// player state (no track field) so official clients list it in the
+  /// devices picker right away. Playing-state PUTs then layer on top.
+  Future<void> _putHello(String token) async {
+    await _putState(
+      token,
+      trackUri: null,
+      positionMs: 0,
+      durationMs: 0,
+      isPlaying: false,
+      isPrivateSession: !_shareEnabled,
+      reason: 1, // SPIRC_HELLO
+    );
+    _everPublished = true;
+    _lastPutAt = DateTime.now();
+    _log('hello PUT OK - device listed');
   }
 
   /// Toggle off: pause + tear the dealer WS down completely.
@@ -456,7 +502,17 @@ class SpotifyPresencePublisher {
       _log('request missing mid/key: $mid');
       return;
     }
-    if (!mid.startsWith('hm://connect-state/v1/$_deviceId')) {
+    // Commands reach us in TWO shapes (device log 2026-11-14 22:00:50):
+    // - "hm://connect-state/v1/<our deviceId>" - direct device routing
+    //   (librespot-style senders),
+    // - "hm://connect-state/v1/player/command" - Spotify's backend relays
+    //   HTTP-endpoint commands (what official Android/desktop apps use)
+    //   to our connection with THIS ident. Both are addressed to us.
+    final isDirect =
+        mid.startsWith('hm://connect-state/v1/$_deviceId');
+    final isRelayed =
+        mid == 'hm://connect-state/v1/player/command';
+    if (!isDirect && !isRelayed) {
       _log('request for other target ignored: $mid');
       return;
     }
@@ -526,6 +582,15 @@ class SpotifyPresencePublisher {
       _lastCommandSender = sender is String ? sender : null;
       _lastCommandMessageId = messageId;
       _pendingCommandAck = true;
+      // Reflect the new volume in the next PUT's DeviceInfo so the
+      // controlling client's slider shows the applied value.
+      if (endpoint == 'set_volume') {
+        final v = command['value'];
+        final vol = (v is num) ? v.toInt() : int.tryParse('$v');
+        if (vol != null && vol >= 0 && vol <= 65536) {
+          _lastVolume = vol;
+        }
+      }
     }
   }
 
@@ -541,10 +606,11 @@ class SpotifyPresencePublisher {
 
   Future<void> _putState(
     String token, {
-    required String trackUri,
+    required String? trackUri,
     required int positionMs,
     required int durationMs,
     required bool isPlaying,
+    required bool isPrivateSession,
     required int reason,
     String? contextUri,
     String? playbackId,
@@ -579,7 +645,7 @@ class SpotifyPresencePublisher {
       ..msg(2, (device) => device
         ..msg(1, (info) => info
           ..enumv(1, 1) // can_play
-          ..enumv(2, 65536) // volume
+          ..enumv(2, _lastVolume) // volume (0..65536; reflects set_volume)
           ..str(3, _deviceName)
           ..msg(4, (caps) {
             caps
@@ -590,13 +656,19 @@ class SpotifyPresencePublisher {
               ..str(9, 'episode');
             // Controllability is gated behind the host's "Enable Connect"
             // setting: presence broadcasting works without it, remote
-            // control does not.
+            // control does not. When it is off the device is ALSO marked
+            // hidden (capability 12) so it stays out of the user's own
+            // devices picker - invisible to the user, visible to friends
+            // when sharing is on. Fully independent toggles.
             if (_remoteControl) {
               caps
                 ..enumv(10, 1) // command_acks
                 ..enumv(16, 1) // is_controllable
                 ..enumv(19, 1) // supports_transfer_command
                 ..enumv(20, 1); // supports_command_request
+            } else {
+              caps
+                ..enumv(12, 1); // hidden
             }
             caps
               ..enumv(22, 1) // needs_full_player_state
@@ -606,7 +678,7 @@ class SpotifyPresencePublisher {
           ..enumv(7, 1) // device_type = COMPUTER
           ..str(9, '3.2.6')
           ..str(10, _deviceId)
-          ..enumv(11, 0) // is_private_session = false
+          ..enumv(11, isPrivateSession ? 1 : 0) // is_private_session
           ..str(13, _clientId))
         ..msg(2, (player) {
           player
@@ -616,10 +688,16 @@ class SpotifyPresencePublisher {
             ..str(2, _contextUri ?? '')
             ..msg(5, (origin) => origin
               ..str(1, 'spotube') // feature_identifier
-              ..str(2, '1.0.0')) // feature_version
-            ..msg(7, (track) => track
-              ..str(1, trackUri)
-              ..str(6, 'context'))
+              ..str(2, '1.0.0')); // feature_version
+          // Idle hello PUTs carry no track field at all (empty player
+          // state, like a real client that has not started playback).
+          final uri = trackUri;
+          if (uri != null) {
+            player.msg(7, (track) => track
+              ..str(1, uri)
+              ..str(6, 'context'));
+          }
+          player
             ..str(8, playbackId ?? '') // playback_id
             ..enumv(10, positionMs) // position_as_of_timestamp
             ..enumv(11, durationMs) // duration
