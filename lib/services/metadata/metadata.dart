@@ -298,7 +298,7 @@ class MetadataPlugin {
         value == true || value == 'true' || value == 1 || value == '1';
     final contextUri = (command['context_uri'] ?? value ?? '').toString();
     unawaited(
-      MirrorTelemetry.log(
+      MirrorTelemetry.logAlways(
         'Publish',
         'handling endpoint=$endpoint value=$value context=$contextUri',
       ),
@@ -331,7 +331,7 @@ class MetadataPlugin {
           final tracks = await _resolveConnectContext(contextUri);
           if (tracks.isEmpty) {
             unawaited(
-              MirrorTelemetry.log(
+              MirrorTelemetry.logError(
                 'Publish',
                 'play/transfer: context "$contextUri" resolved to no tracks',
               ),
@@ -368,7 +368,7 @@ class MetadataPlugin {
           // clients don't show errors, but Spotube's player has no
           // primitives for them yet.
           unawaited(
-            MirrorTelemetry.log(
+            MirrorTelemetry.logAlways(
               'Publish',
               'endpoint=$endpoint acked without effect (no host primitive)',
             ),
@@ -377,7 +377,7 @@ class MetadataPlugin {
       }
     } catch (e) {
       unawaited(
-        MirrorTelemetry.log('Publish', 'command endpoint=$endpoint failed: $e'),
+        MirrorTelemetry.logError('Publish', 'command endpoint=$endpoint failed: $e'),
       );
       return false;
     }
@@ -409,11 +409,11 @@ class MetadataPlugin {
         return page.items.map((t) => t.toJson()).toList();
       }
       unawaited(
-        MirrorTelemetry.log('Publish', 'context "$uri" type not supported'),
+        MirrorTelemetry.logAlways('Publish', 'context "$uri" type not supported'),
       );
     } catch (e) {
       unawaited(
-        MirrorTelemetry.log('Publish', 'context resolve "$uri" failed: $e'),
+        MirrorTelemetry.logError('Publish', 'context resolve "$uri" failed: $e'),
       );
     }
     return [];

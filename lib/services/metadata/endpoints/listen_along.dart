@@ -136,6 +136,14 @@ class MetadataPluginListenAlongEndpoint {
   Future<void> _t(String msg) =>
       MirrorTelemetry.log('ListenAlong', msg);
 
+  /// TEMP telemetry (remove with mirror_telemetry.dart).
+  Future<void> _ta(String msg) =>
+      MirrorTelemetry.logAlways('ListenAlong', msg);
+
+  /// TEMP telemetry (remove with mirror_telemetry.dart).
+  Future<void> _te(String msg) =>
+      MirrorTelemetry.logError('ListenAlong', msg);
+
   void _markSelf(String action) => _selfActions[action] = DateTime.now();
 
   bool _selfActionWithin(String action, Duration window) {
@@ -184,7 +192,7 @@ class MetadataPluginListenAlongEndpoint {
       );
       return raw is Map ? Map<String, dynamic>.from(raw) : null;
     } catch (e) {
-      await _t('entry fetch error for $userId: $e');
+      await _te('entry fetch error for $userId: $e');
       return null;
     }
   }
@@ -225,7 +233,7 @@ class MetadataPluginListenAlongEndpoint {
 
   Future<void> stop({String reason = 'user'}) async {
     if (_startedWith != null) {
-      await _t('stop reason=$reason id=$_startedWith');
+      await _ta('stop reason=$reason id=$_startedWith');
     }
     _timer?.cancel();
     _timer = null;
@@ -271,7 +279,7 @@ class MetadataPluginListenAlongEndpoint {
       return true;
     }
     _startupRefreshAsked = true;
-    await _t('startup grace: "$reason" on possibly-stale data '
+    await _ta('startup grace: "$reason" on possibly-stale data '
         '-> demanding refresh, waiting up to ${startupGrace.inSeconds}s');
     onDemandDataRefresh?.call();
     return true;
@@ -332,7 +340,7 @@ class MetadataPluginListenAlongEndpoint {
       final idleMin =
           now.difference(_friendIdleSince!).inMilliseconds / 60000.0;
       if (now.difference(_friendIdleSince!) > idleStopAfter) {
-        await _t('IDLE timeout after ${idleMin.toStringAsFixed(1)}min '
+        await _ta('IDLE timeout after ${idleMin.toStringAsFixed(1)}min '
             '-> stop mirror');
         await _pauseAndStop();
         return;
@@ -366,7 +374,7 @@ class MetadataPluginListenAlongEndpoint {
       final old = _lastTrackId;
       final name = track["name"];
       final durationMs = track["durationMs"];
-      await _t('PLAY newTrack oldId=$old newId=$trackId name="$name" '
+      await _ta('PLAY newTrack oldId=$old newId=$trackId name="$name" '
           'friendAgeMs=$friendAgeMs durationMs=$durationMs');
       _lastTrackId = trackId;
       _loadEntryTsMs =
@@ -385,10 +393,10 @@ class MetadataPluginListenAlongEndpoint {
               '(stream resolution happens lazily on the player side)');
           _watchStart(trackId.toString());
         } catch (e) {
-          await _t('loadTracks FAILED: $e');
+          await _te('loadTracks FAILED: $e');
         }
       } else {
-        await _t('no player wired; data-only mirror');
+        await _ta('no player wired; data-only mirror');
       }
       _adaptLead(entry, oldLead: _earlyFetchLeadMs);
       _wasPlaying = true;
@@ -413,21 +421,21 @@ class MetadataPluginListenAlongEndpoint {
 
     // TEMP attribution: transitions the mirror did NOT just cause itself.
     if (_wasPlaying && !playing && !_selfActionWithin('pause', const Duration(seconds: 5))) {
-      await _t('OBSERVED-PAUSE posMs=${state["positionMs"]} '
+      await _ta('OBSERVED-PAUSE posMs=${state["positionMs"]} '
           'ourRemainingMs=$remaining (not ours -> user?)');
     }
     if (!_wasPlaying &&
         playing &&
         !_selfActionWithin('play', const Duration(seconds: 25)) &&
         !_selfActionWithin('load', const Duration(seconds: 25))) {
-      await _t('OBSERVED-RESUME posMs=${state["positionMs"]} '
+      await _ta('OBSERVED-RESUME posMs=${state["positionMs"]} '
           '(not ours -> user?)');
     }
     if (_lastObservedOurTrackId != null &&
         ourTrackId != null &&
         ourTrackId.toString() != _lastObservedOurTrackId &&
         !_selfActionWithin('load', const Duration(seconds: 25))) {
-      await _t('OBSERVED-TRACK-CHANGE '
+      await _ta('OBSERVED-TRACK-CHANGE '
           'old=$_lastObservedOurTrackId new=$ourTrackId '
           '(not ours -> user skip / endless radio?)');
     }
@@ -466,7 +474,7 @@ class MetadataPluginListenAlongEndpoint {
           _loadEntryTsMs != null &&
           entryTs != _loadEntryTsMs;
       if (tsChanged) {
-        await _t('REPLAY seek0 ourRemainingMs=$remaining '
+        await _ta('REPLAY seek0 ourRemainingMs=$remaining '
             'friendRemainingMs=$friendRemainingMs friendAgeMs=$friendAgeMs '
             'entryTsNow=$entryTs entryTsAtLoad=$_loadEntryTsMs '
             'entryTsChanged=true posMs=${state["positionMs"]} ourTrackId=$ourTrackId');
@@ -476,7 +484,7 @@ class MetadataPluginListenAlongEndpoint {
           await player.seek(0);
           await player.play();
         } catch (e) {
-          await _t('replay seek/play FAILED: $e');
+          await _te('replay seek/play FAILED: $e');
         }
       } else {
         await _t('REPLAY-SKIPPED ourRemainingMs=$remaining '
@@ -523,7 +531,7 @@ class MetadataPluginListenAlongEndpoint {
         timer.cancel();
         _startWatchTimer = null;
         _pendingStartTrackId = null;
-        await _t('STARTED id=$id load->play=${elapsed}ms '
+        await _ta('STARTED id=$id load->play=${elapsed}ms '
             'posMs=${state["positionMs"]}');
         return;
       }
@@ -537,7 +545,7 @@ class MetadataPluginListenAlongEndpoint {
         timer.cancel();
         _startWatchTimer = null;
         _pendingStartTrackId = null;
-        await _t('OVERRIDDEN wanted=$id but player is on $activeId '
+        await _ta('OVERRIDDEN wanted=$id but player is on $activeId '
             'after ${elapsed}ms (endless radio / user?)');
         return;
       }
@@ -545,7 +553,7 @@ class MetadataPluginListenAlongEndpoint {
         timer.cancel();
         _startWatchTimer = null;
         _pendingStartTrackId = null;
-        await _t('NEVER-STARTED id=$id after ${elapsed}ms '
+        await _te('NEVER-STARTED id=$id after ${elapsed}ms '
             '(sourcing failed? see TrackNotFoundError in logs)');
       }
     });

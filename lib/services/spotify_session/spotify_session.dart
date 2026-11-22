@@ -211,8 +211,7 @@ class SpotifySessionService {
     final feedTs = prefs.getInt(_key('la_feed_ts')) ?? 0;
     final stale = DateTime.now().millisecondsSinceEpoch - feedTs > 15000;
     if (stale || _token == null) {
-      unawaited(MirrorTelemetry.log('FriendFeed',
-          'wake: surface opened, feed '
+      unawaited(MirrorTelemetry.logAlways('FriendFeed', 'wake: surface opened, feed '
           '${feedTs == 0 ? 'never fetched' : 'stale for ${(DateTime.now().millisecondsSinceEpoch - feedTs) ~/ 1000}s'}'));
       _timer = Timer(const Duration(milliseconds: 500), () {
         _tick();
@@ -238,8 +237,7 @@ class SpotifySessionService {
       _timer = null;
       if (!_dormantLogged) {
         _dormantLogged = true;
-        unawaited(MirrorTelemetry.log(
-            'FriendFeed', 'dormant: no consumer, polling stopped'));
+        unawaited(MirrorTelemetry.logAlways('FriendFeed', 'dormant: no consumer, polling stopped'));
       }
       return;
     }
@@ -309,7 +307,7 @@ class SpotifySessionService {
     } catch (e) {
       // Upkeep is best-effort; a failed tick leaves the previous feed/token
       // intact and the next tick retries.
-      await MirrorTelemetry.log('FriendFeed', 'tick error: $e');
+      await MirrorTelemetry.logError('FriendFeed', 'tick error: $e');
     } finally {
       _ticking = false;
     }
@@ -389,8 +387,7 @@ class SpotifySessionService {
       final now = DateTime.now().millisecondsSinceEpoch;
       if (now - _lastNoBlobLogMs > 3600 * 1000) {
         _lastNoBlobLogMs = now;
-        unawaited(MirrorTelemetry.log('FriendFeed',
-            'la_blob MISSING - open the plugin\'s setup and paste the '
+        unawaited(MirrorTelemetry.logError('FriendFeed', 'la_blob MISSING - open the plugin\'s setup and paste the '
             'credentials blob; the friend feed cannot start without it'));
       }
       return; // not configured yet
@@ -443,8 +440,7 @@ class SpotifySessionService {
       _login5AuthFails++;
       if (_login5AuthFails >= _authFailThreshold) {
         await prefs.setString(_key('la_status'), 'auth_failed');
-        await MirrorTelemetry.log('FriendFeed',
-            'blob rejected ${_login5AuthFails}x (login5 returned no token) '
+        await MirrorTelemetry.logError('FriendFeed', 'blob rejected ${_login5AuthFails}x (login5 returned no token) '
             '-> la_status=auth_failed; the UI now shows the setup card');
       }
       throw const HttpException('login5 did not return an access token');
@@ -473,8 +469,7 @@ class SpotifySessionService {
     if (newBlob != null && newBlob.isNotEmpty) {
       await prefs.setString(_key('la_blob'), base64Encode(newBlob));
     }
-    await MirrorTelemetry.log('FriendFeed',
-        'login5 token refreshed (me=$_me, blobRotated=${newBlob != null})');
+    await MirrorTelemetry.logAlways('FriendFeed', 'login5 token refreshed (me=$_me, blobRotated=${newBlob != null})');
   }
 
   Future<void> _refreshFeed(List<String> friends) async {
@@ -495,8 +490,7 @@ class SpotifySessionService {
       (bb, d) => bb..add(d),
     ).then((bb) => bb.takeBytes());
     if (res.statusCode != 200) {
-      await MirrorTelemetry.log('FriendFeed',
-          'fetch FAILED status=${res.statusCode} '
+      await MirrorTelemetry.logError('FriendFeed', 'fetch FAILED status=${res.statusCode} '
           'after ${DateTime.now().difference(t0).inMilliseconds}ms');
       throw const HttpException('users-activity failed');
     }

@@ -181,7 +181,7 @@ class SpotifyPresencePublisher {
     try {
       await _tickInner();
     } catch (e) {
-      _log('tick error: $e');
+      _logError('tick error: $e');
     } finally {
       _tickBusy = false;
     }
@@ -202,7 +202,7 @@ class SpotifyPresencePublisher {
     if (token == null) {
       if (!_loggedNoToken) {
         _loggedNoToken = true;
-        _log('no login5 token yet - publish idle (blob missing/rejected?)');
+        _logError('no login5 token yet - publish idle (blob missing/rejected?)');
       }
       await _pausePublishing();
       return;
@@ -219,7 +219,7 @@ class SpotifyPresencePublisher {
     if (spotifyId == null) {
       if (id != null && id != _lastUnmappedId) {
         _lastUnmappedId = id;
-        _log('track unmappable to Spotify (id=$id) - not publishing');
+        _logAlways('track unmappable to Spotify (id=$id) - not publishing');
       }
       // Sharing on: pause the published state so friends stop seeing the
       // stale "playing" entry. Sharing off: leave the (private) device as
@@ -375,7 +375,7 @@ class SpotifyPresencePublisher {
     );
     _everPublished = true;
     _lastPutAt = DateTime.now();
-    _log('hello PUT OK - device listed');
+    _logAlways('hello PUT OK - device listed');
   }
 
   /// Toggle off: pause + tear the dealer WS down completely.
@@ -424,7 +424,7 @@ class SpotifyPresencePublisher {
           _heartbeat = null;
         },
         onError: (e) {
-          _log('dealer error: $e');
+          _logError('dealer error: $e');
           _ws = null;
           _connectionId = '';
           _heartbeat?.cancel();
@@ -487,7 +487,7 @@ class SpotifyPresencePublisher {
           break;
       }
     } catch (e) {
-      _log('frame parse error: $e');
+      _logError('frame parse error: $e');
     }
   }
 
@@ -499,7 +499,7 @@ class SpotifyPresencePublisher {
     final mid = frame['message_ident'] as String?;
     final key = frame['key'];
     if (mid == null || key == null) {
-      _log('request missing mid/key: $mid');
+      _logError('request missing mid/key: $mid');
       return;
     }
     // Commands reach us in TWO shapes (device log 2026-11-14 22:00:50):
@@ -520,7 +520,7 @@ class SpotifyPresencePublisher {
       // "Enable Connect" is off: we still broadcast presence, but the device
       // is not controllable (and not advertised as such). Anything that
       // slips through anyway gets an explicit rejection reply.
-      _log('remote control disabled (Enable Connect off) - rejecting');
+      _logAlways('remote control disabled (Enable Connect off) - rejecting');
       _sendReply(key as String, false);
       return;
     }
@@ -535,19 +535,19 @@ class SpotifyPresencePublisher {
         final decoded = gzip.decode(gzipBytes);
         payload = jsonDecode(utf8.decode(decoded)) as Map<String, dynamic>;
       } catch (e) {
-        _log('gzip payload decode failed: $e');
+        _logError('gzip payload decode failed: $e');
         _sendReply(key as String, false);
         return;
       }
     }
     if (payload is! Map) {
-      _log('request payload missing');
+      _logError('request payload missing');
       _sendReply(key as String, false);
       return;
     }
     final command = payload['command'];
     if (command is! Map) {
-      _log('request command missing');
+      _logError('request command missing');
       _sendReply(key as String, false);
       return;
     }
@@ -555,8 +555,7 @@ class SpotifyPresencePublisher {
     final endpoint = (command['endpoint'] ?? '').toString();
     final messageId = (payload['message_id'] as num?)?.toInt();
     final sender = payload['sent_by_device_id'];
-    _log(
-      'command received: endpoint=$endpoint '
+    _logAlways('command received: endpoint=$endpoint '
       'value=${command['value']} msgId=$messageId sender=$sender '
       'keys=${command.keys.toList()}',
     );
@@ -570,13 +569,13 @@ class SpotifyPresencePublisher {
           Map<String, dynamic>.from(command),
         );
       } catch (e) {
-        _log('command handler error: $e');
+        _logError('command handler error: $e');
         handled = false;
       }
     } else {
-      _log('no command handler wired - rejecting');
+      _logAlways('no command handler wired - rejecting');
     }
-    _log('command endpoint=$endpoint handled=$handled');
+    _logAlways('command endpoint=$endpoint handled=$handled');
     _sendReply(key as String, handled);
     if (handled) {
       _lastCommandSender = sender is String ? sender : null;
@@ -597,7 +596,7 @@ class SpotifyPresencePublisher {
   void _sendReply(String key, bool success) {
     final w = _ws;
     if (w == null || w.readyState != WebSocket.open) {
-      _log('reply skipped - dealer closed');
+      _logError('reply skipped - dealer closed');
       return;
     }
     w.add('{"type":"reply", "key": "$key", "payload": {"success": $success}}');
@@ -743,16 +742,20 @@ class SpotifyPresencePublisher {
       // Drain the body so the socket is reusable.
       await res.drain<void>();
       if (res.statusCode != 200) {
-        _log('PUT seq=$_seq reason=$reason -> ${res.statusCode}');
+        _logError('PUT seq=$_seq reason=$reason -> ${res.statusCode}');
       } else if (_seq == 1 || reason == 1) {
-        _log('first PUT OK (device=$_deviceId)');
+        _logAlways('first PUT OK (device=$_deviceId)');
       }
     } catch (e) {
-      _log('PUT seq=$_seq error: $e');
+      _logError('PUT seq=$_seq error: $e');
     }
   }
 
   void _log(String message) => unawaited(MirrorTelemetry.log('Publish', message));
+
+  void _logAlways(String message) => unawaited(MirrorTelemetry.logAlways('Publish', message));
+
+  void _logError(String message) => unawaited(MirrorTelemetry.logError('Publish', message));
 }
 
 /// Minimal protobuf writer (same hand-rolled style as the one in
