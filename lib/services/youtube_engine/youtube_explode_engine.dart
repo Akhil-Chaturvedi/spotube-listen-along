@@ -149,6 +149,31 @@ class IsolatedYoutubeExplode {
 class YouTubeExplodeEngine implements YouTubeEngine {
   static final _youtubeExplode = IsolatedYoutubeExplode.instance;
 
+  /// ANDROID client WITHOUT the `androidSdkVersion` field (yt-dlp's
+  /// "android_sdkless" client). Doesn't require a PO token and its stream
+  /// URLs don't 403 - since ~2026-11-21 the ios/android/androidVr clients
+  /// return stream URLs that YouTube rejects with 403 at fetch time
+  /// (device log: every track "Failed to open ... /stream/<id>").
+  ///
+  /// Copied verbatim from youtube_explode_dart master (unreleased; landed
+  /// after 3.1.0). Drop this const once the package publishes it and pin
+  /// that version instead.
+  static const androidSdkless = YoutubeApiClient({
+    'context': {
+      'client': {
+        'clientName': 'ANDROID',
+        'clientVersion': '20.10.38',
+        'userAgent':
+            'com.google.android.youtube/20.10.38 (Linux; U; Android 11) gzip',
+        'hl': 'en',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
+        'osName': 'Android',
+        'osVersion': '11',
+      },
+    },
+  }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
+
   static bool get isAvailableForPlatform => true;
 
   static Future<bool> isInstalled() async {
@@ -163,8 +188,9 @@ class YouTubeExplodeEngine implements YouTubeEngine {
       videoId,
       requireWatchPage: false,
       ytClients: [
-        YoutubeApiClient.ios,
+        androidSdkless,
         YoutubeApiClient.androidVr,
+        YoutubeApiClient.ios,
         YoutubeApiClient.android,
       ],
     );
