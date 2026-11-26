@@ -19,6 +19,7 @@ import 'package:spotube/provider/server/sourced_track_provider.dart';
 import 'package:spotube/provider/user_preferences/user_preferences_provider.dart';
 import 'package:spotube/services/audio_player/audio_player.dart';
 import 'package:spotube/services/logger/logger.dart';
+import 'package:spotube/services/metadata/endpoints/mirror_telemetry.dart';
 import 'package:spotube/services/sourced_track/sourced_track.dart';
 import 'package:spotube/utils/service_utils.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
@@ -30,11 +31,26 @@ final _deviceClients = Set.unmodifiable({
   YoutubeApiClient.safari,
 });
 
-String? get _randomUserAgent => _deviceClients
-    .elementAt(
-      Random().nextInt(_deviceClients.length),
-    )
-    .payload["context"]["client"]["userAgent"];
+// mweb's payload has no `userAgent` field in youtube_explode 3.1.0 - picking
+// it produced a null UA header (now filtered out defensively).
+final _uaClients = _deviceClients
+    .where((c) => c.payload["context"]["client"]["userAgent"] != null)
+    .toList();
+
+String? get _randomUserAgent => _uaClients.isEmpty
+    ? null
+    : _uaClients
+        .elementAt(
+          Random().nextInt(_uaClients.length),
+        )
+        .payload["context"]["client"]["userAgent"] as String?;
+
+String? _describeUpstream(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return 'unparsable-url';
+  final itag = uri.queryParameters['itag'];
+  return '${uri.host} itag=$itag';
+}
 
 class ServerPlaybackRoutes {
   final Ref ref;
@@ -190,13 +206,28 @@ class ServerPlaybackRoutes {
     ).catchError((e, stack) async {
       AppLogger.reportError(e, stack);
 
+      final status = e is DioException ? e.response?.statusCode : null;
+      unawaited(MirrorTelemetry.logError(
+        'StreamTrack',
+        'HEAD failed (${status ?? "?"}) on ${_describeUpstream(url)} '
+        'for "${track.query.name}" - refreshing URL and retrying once',
+      ));
+
       final sourcedTrack = await ref
           .read(sourcedTrackProvider(track.query).notifier)
           .refreshStreamingUrl();
 
       url = sourcedTrack.url!;
 
-      return dio.head(url, options: options);
+      return dio.head(url, options: options).catchError((e, stack) {
+        final status = e is DioException ? e.response?.statusCode : null;
+        unawaited(MirrorTelemetry.logError(
+          'StreamTrack',
+          'retry HEAD also failed (${status ?? "?"}) on '
+          '${_describeUpstream(url)} for "${track.query.name}"',
+        ));
+        throw e;
+      });
     });
 
     // Redirect to m3u8 link directly as it handles range requests internally

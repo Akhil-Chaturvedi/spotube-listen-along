@@ -99,6 +99,12 @@ class SpotifyPresencePublisher {
   bool _isPlaying = false;
   int _durationMs = 0;
   bool _everPublished = false;
+  /// True once the idle SPIRC_HELLO (or any real-track PUT) has gone out in
+  /// this publishing session. Unlike [_everPublished] it is NOT reset by
+  /// [_pausePublishing], so the idle hello fires once per session instead of
+  /// re-firing every tick (device log 2026-11-25: hello PUTs ~1/sec for 10s
+  /// while idle with sharing on - pause->hello->pause ping-pong).
+  bool _helloDone = false;
   DateTime _lastPutAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _lastUnmappedId;
   bool _loggedNoToken = false;
@@ -227,7 +233,7 @@ class SpotifyPresencePublisher {
       if (_shareEnabled) {
         await _pausePublishing();
       }
-      if (!_everPublished) {
+      if (!_everPublished && !_helloDone) {
         // Idle presence: one SPIRC_HELLO so the "Spotube" device shows up
         // in the official clients' devices picker immediately (real
         // clients register on app start, not on first play).
@@ -331,6 +337,7 @@ class SpotifyPresencePublisher {
     _isPlaying = isPlaying;
     _durationMs = durationMs;
     _everPublished = true;
+    _helloDone = true;
     _lastPutAt = DateTime.now();
     _pendingCommandAck = false;
   }
@@ -374,6 +381,7 @@ class SpotifyPresencePublisher {
       reason: 1, // SPIRC_HELLO
     );
     _everPublished = true;
+    _helloDone = true;
     _lastPutAt = DateTime.now();
     _logAlways('hello PUT OK - device listed');
   }
@@ -381,6 +389,8 @@ class SpotifyPresencePublisher {
   /// Toggle off: pause + tear the dealer WS down completely.
   Future<void> _stopPublishing() async {
     await _pausePublishing();
+    // Full stop (toggles off): the next session says hello again, once.
+    _helloDone = false;
     _heartbeat?.cancel();
     _heartbeat = null;
     try {

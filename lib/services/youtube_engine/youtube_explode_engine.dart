@@ -1,11 +1,13 @@
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
+import 'package:spotube/services/metadata/endpoints/mirror_telemetry.dart';
 import 'package:spotube/services/youtube_engine/youtube_engine.dart';
 // import 'package:youtube_explode_dart/solvers.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 import 'dart:async';
+import 'dart:io';
 
 /// It contains methods that are computationally expensive
 class IsolatedYoutubeExplode {
@@ -97,11 +99,104 @@ class IsolatedYoutubeExplode {
             requireWatchPage: arguments.elementAtOrNull(1) ?? true,
             ytClients: arguments.elementAtOrNull(2) as List<YoutubeApiClient>?,
           ),
+        // Per-client resolve with a HEAD check on the exact audio URL we will
+        // hand out. The package's own getManifest only validates
+        // `streams.first` (often an HLS fragment) before accepting a client,
+        // while adaptive audio itags can still 403 at play time (device log
+        // 2026-11-25: every track "Failed to open .../stream/<id>"). Returns
+        // [StreamManifest(single validated stream), diagString].
+        "manifestVerified" => _manifestVerified(
+            youtubeExplode,
+            arguments[0] as String,
+            arguments[1] as List<YoutubeApiClient>,
+          ),
         _ => throw ArgumentError('Invalid method name: $methodName'),
       };
 
       replyPort.send(await result);
     });
+  }
+
+  static Future<int> _headStatus(String url, String? userAgent) async {
+    final client = HttpClient();
+    if (userAgent != null) {
+      client.userAgent = userAgent;
+    }
+    try {
+      final req = await client
+          .headUrl(Uri.parse(url))
+          .timeout(const Duration(seconds: 15));
+      final res = await req.close().timeout(const Duration(seconds: 15));
+      final code = res.statusCode;
+      await res.drain<void>();
+      return code;
+    } catch (_) {
+      return -1;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static String? _clientUserAgent(YoutubeApiClient client) {
+    final context = client.payload['context'];
+    final clientCtx =
+        context is Map<String, dynamic> ? context['client'] : null;
+    final ua = clientCtx is Map<String, dynamic> ? clientCtx['userAgent'] : null;
+    return ua is String ? ua : null;
+  }
+
+  static Future<List<dynamic>> _manifestVerified(
+    YoutubeExplode youtubeExplode,
+    String videoId,
+    List<YoutubeApiClient> clients,
+  ) async {
+    final tried = <String>[];
+
+    for (final client in clients) {
+      final name =
+          client.payload['context']['client']['clientName'] as String? ??
+              'unknown';
+
+      final StreamManifest manifest;
+      try {
+        manifest = await youtubeExplode.videos.streamsClient.getManifest(
+          videoId,
+          requireWatchPage: false,
+          ytClients: [client],
+        );
+      } catch (e) {
+        tried.add('$name:manifest-fail');
+        continue;
+      }
+
+      final audio = manifest.audioOnly
+          .where((stream) => stream.bitrate.bitsPerSecond >= 40960)
+          .toList()
+        ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
+
+      if (audio.isEmpty) {
+        tried.add('$name:no-audio');
+        continue;
+      }
+
+      for (final stream in audio.take(6)) {
+        final code = await _headStatus(
+          stream.url.toString(),
+          _clientUserAgent(client),
+        );
+        if (code == 200) {
+          return [
+            StreamManifest([stream]),
+            'video=$videoId client=$name itag=${stream.tag} '
+                '${stream.bitrate.kiloBitsPerSecond.toInt()}kbps HEAD=200',
+          ];
+        }
+        tried.add('$name:itag${stream.tag}:$code');
+      }
+    }
+
+    throw 'all ${clients.length} clients failed to yield a playable audio URL '
+        'for $videoId [${tried.join(", ")}]';
   }
 
   Future<T> _runMethod<T>(String methodName, List<dynamic> args) {
@@ -140,6 +235,19 @@ class IsolatedYoutubeExplode {
     ]);
   }
 
+  /// Returns `[StreamManifest, diag]` where the manifest contains exactly the
+  /// audio stream whose URL was HEAD-validated as playable (HTTP 200) from
+  /// this network. See the "manifestVerified" case in [_isolateEntry].
+  Future<List<dynamic>> manifestVerified(
+    String videoId,
+    List<YoutubeApiClient> ytClients,
+  ) async {
+    return _runMethod<List<dynamic>>("manifestVerified", [
+      videoId,
+      ytClients,
+    ]);
+  }
+
   void dispose() {
     _receivePort.close();
     _isolate.kill(priority: Isolate.immediate);
@@ -149,15 +257,15 @@ class IsolatedYoutubeExplode {
 class YouTubeExplodeEngine implements YouTubeEngine {
   static final _youtubeExplode = IsolatedYoutubeExplode.instance;
 
-  /// ANDROID client WITHOUT the `androidSdkVersion` field (yt-dlp's
-  /// "android_sdkless" client). Doesn't require a PO token and its stream
-  /// URLs don't 403 - since ~2026-11-21 the ios/android/androidVr clients
-  /// return stream URLs that YouTube rejects with 403 at fetch time
-  /// (device log: every track "Failed to open ... /stream/<id>").
+  /// Client preference order. First one whose audio URL actually returns 200
+  /// in [_manifestVerified] wins, so the chain self-heals whenever YouTube
+  /// tightens PO-token enforcement for one of them (that's exactly what
+  /// happened to ios/android/androidVr on ~2026-11-21 - their adaptive audio
+  /// URLs 403 while the player request still succeeds).
   ///
-  /// Copied verbatim from youtube_explode_dart master (unreleased; landed
-  /// after 3.1.0). Drop this const once the package publishes it and pin
-  /// that version instead.
+  /// `androidSdkless` = ANDROID client without the `androidSdkVersion` field
+  /// (yt-dlp's "android_sdkless"); doesn't require a PO token. Copied verbatim
+  /// from youtube_explode_dart (also present in the 3.1.0 release).
   static const androidSdkless = YoutubeApiClient({
     'context': {
       'client': {
@@ -184,16 +292,24 @@ class YouTubeExplodeEngine implements YouTubeEngine {
   Future<StreamManifest> getStreamManifest(String videoId) async {
     await IsolatedYoutubeExplode.initialize();
 
-    final streamManifest = await _youtubeExplode.manifest(
-      videoId,
-      requireWatchPage: false,
-      ytClients: [
+    final List<dynamic> verified;
+    try {
+      verified = await _youtubeExplode.manifestVerified(videoId, [
         androidSdkless,
         YoutubeApiClient.androidVr,
         YoutubeApiClient.ios,
         YoutubeApiClient.android,
-      ],
-    );
+      ]);
+    } catch (e) {
+      unawaited(MirrorTelemetry.logError(
+        'YT',
+        'no playable audio URL for $videoId: $e',
+      ));
+      rethrow;
+    }
+
+    final streamManifest = verified[0] as StreamManifest;
+    unawaited(MirrorTelemetry.logAlways('YT', verified[1] as String));
 
     final audioStreams = streamManifest.audioOnly.where(
       (stream) => stream.bitrate.bitsPerSecond >= 40960,
