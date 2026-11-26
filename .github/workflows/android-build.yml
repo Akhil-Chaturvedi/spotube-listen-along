@@ -86,7 +86,9 @@ jobs:
               -dname "CN=Spotube Listen Along, OU=Dev, O=Dev, L=Dev, S=Dev, C=IN"
             git config user.name "spotube-ci"
             git config user.email "ci@users.noreply.github.com"
-            git add android/app/upload-keystore.jks
+            # upstream .gitignore deliberately excludes keystores; this fork
+            # force-adds THIS one on purpose (stable signature > hygiene).
+            git add -f android/app/upload-keystore.jks
             git commit -m "ci: commit stable signing keystore (ends app-data wipe on every APK update)"
             git push || (
               echo "push failed (concurrent build won the race) - reusing the keystore already committed"
