@@ -66,13 +66,36 @@ jobs:
           flutter pub get
           dart cli/cli.dart install-dependencies --platform=android --arch=all
 
-      - name: Generate a debug keystore for signing
+      - name: Ensure STABLE signing keystore (committed to the repo)
+        # Android signature = the signing keystore. A random per-build key
+        # means every APK update fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE
+        # -> forced uninstall/reinstall -> ALL app data wiped (plugin blob,
+        # share toggle, default plugins; device log 2026-11-26). The keystore
+        # is therefore committed to the repo: the first build that doesn't
+        # find it generates one and commits it; every later build reuses the
+        # SAME signature, so updates install in place and preserve data.
+        # (GITHUB_TOKEN pushes do not trigger new workflow runs, so the
+        # auto-commit cannot recurse.)
         run: |
-          keytool -genkeypair -v \
-            -keystore android/app/upload-keystore.jks \
-            -storepass spotube123 -keypass spotube123 \
-            -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Spotube Listen Along, OU=Dev, O=Dev, L=Dev, S=Dev, C=IN"
+          if [ ! -f android/app/upload-keystore.jks ]; then
+            echo "No committed keystore - generating one and committing it"
+            keytool -genkeypair -v \
+              -keystore android/app/upload-keystore.jks \
+              -storepass spotube123 -keypass spotube123 \
+              -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Spotube Listen Along, OU=Dev, O=Dev, L=Dev, S=Dev, C=IN"
+            git config user.name "spotube-ci"
+            git config user.email "ci@users.noreply.github.com"
+            git add android/app/upload-keystore.jks
+            git commit -m "ci: commit stable signing keystore (ends app-data wipe on every APK update)"
+            git push || (
+              echo "push failed (concurrent build won the race) - reusing the keystore already committed"
+              git fetch origin
+              git reset --hard "origin/$GITHUB_REF_NAME"
+            )
+          else
+            echo "Using committed keystore - APK signature stays stable across builds"
+          fi
           cat > android/key.properties <<'EOF'
           storePassword=spotube123
           keyPassword=spotube123

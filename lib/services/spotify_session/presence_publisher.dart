@@ -108,6 +108,12 @@ class SpotifyPresencePublisher {
   DateTime _lastPutAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _lastUnmappedId;
   bool _loggedNoToken = false;
+  /// One-time "sharing is off" explanation per publisher session. Without it
+  /// a disabled publisher is completely silent and "why don't my friends see
+  /// my activity" is undiagnosable from device logs (2026-11-26: user log had
+  /// zero [Publish] lines - sharing had been wiped by an APK reinstall).
+  /// Reset when sharing turns on, so the next off-transition logs again.
+  bool _loggedShareOff = false;
   bool _pendingCommandAck = false;
   String? _lastCommandSender;
   int? _lastCommandMessageId;
@@ -195,9 +201,27 @@ class SpotifyPresencePublisher {
 
   Future<void> _tickInner() async {
     if (!_enabled) {
+      // Sharing off AND Connect off: no virtual device at all. Say so once
+      // (only when the plugin is actually set up) so a silent log is
+      // self-explanatory instead of looking like a dead publisher.
+      if (!_loggedShareOff && prefs.containsKey(_key('la_blob'))) {
+        _loggedShareOff = true;
+        _logAlways('sharing disabled - turn on "Share my listening activity '
+            'on Spotify" (plugin settings) so friends can see what you play');
+      }
       _loggedNoToken = false;
       await _stopPublishing();
       return;
+    }
+    if (_shareEnabled) {
+      _loggedShareOff = false;
+    } else if (!_loggedShareOff) {
+      // Enabled only via "Enable Connect": the device runs as a private
+      // session - controllable, but invisible to friends by design.
+      _loggedShareOff = true;
+      _logAlways('private session (sharing off) - friends will not see your '
+          'activity; turn on "Share my listening activity on Spotify" '
+          '(plugin settings) to broadcast');
     }
     if (_player == null) {
       final factory = createPlayer;
@@ -317,7 +341,7 @@ class SpotifyPresencePublisher {
     }
 
     final posMs = (state['positionMs'] as num?)?.toInt() ?? 0;
-    await _putState(
+    final putOk = await _putState(
       token,
       trackUri: 'spotify:track:$spotifyId',
       positionMs: posMs.clamp(0, 1000 * 60 * 60),
@@ -333,6 +357,12 @@ class SpotifyPresencePublisher {
       repeatingContext: _lastRepeatingContext,
       repeatingTrack: _lastRepeatingTrack,
     );
+    if (putOk && (trackChanged || playChanged)) {
+      // One line per real transition (NOT per 60s keepalive) so device logs
+      // can prove exactly what was published to the friend feed.
+      _logAlways('PUT OK ${isPlaying ? 'playing' : 'paused'} $spotifyId '
+          'pos=${posMs}ms');
+    }
     _activeTrackId = spotifyId;
     _isPlaying = isPlaying;
     _durationMs = durationMs;
@@ -371,7 +401,7 @@ class SpotifyPresencePublisher {
   /// player state (no track field) so official clients list it in the
   /// devices picker right away. Playing-state PUTs then layer on top.
   Future<void> _putHello(String token) async {
-    await _putState(
+    final ok = await _putState(
       token,
       trackUri: null,
       positionMs: 0,
@@ -383,7 +413,10 @@ class SpotifyPresencePublisher {
     _everPublished = true;
     _helloDone = true;
     _lastPutAt = DateTime.now();
-    _logAlways('hello PUT OK - device listed');
+    // _helloDone stays set even on failure: retrying the hello every 1s tick
+    // would re-create the hello ping-pong (2026-11-25); failures self-heal
+    // via the next real state PUT. Just don't claim success on failure.
+    if (ok) _logAlways('hello PUT OK - device listed');
   }
 
   /// Toggle off: pause + tear the dealer WS down completely.
@@ -613,7 +646,11 @@ class SpotifyPresencePublisher {
     _log('reply sent: key=$key success=$success');
   }
 
-  Future<void> _putState(
+  /// Returns whether the PUT was accepted (200). Callers use this for
+  /// success telemetry only - state bookkeeping deliberately proceeds the
+  /// same way either way (failures self-heal via the 60s keepalive or the
+  /// next transition, never via a per-tick retry storm).
+  Future<bool> _putState(
     String token, {
     required String? trackUri,
     required int positionMs,
@@ -753,11 +790,15 @@ class SpotifyPresencePublisher {
       await res.drain<void>();
       if (res.statusCode != 200) {
         _logError('PUT seq=$_seq reason=$reason -> ${res.statusCode}');
-      } else if (_seq == 1 || reason == 1) {
+        return false;
+      }
+      if (_seq == 1 || reason == 1) {
         _logAlways('first PUT OK (device=$_deviceId)');
       }
+      return true;
     } catch (e) {
       _logError('PUT seq=$_seq error: $e');
+      return false;
     }
   }
 
